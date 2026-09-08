@@ -90,6 +90,7 @@
         <div class="tools">
           <button class="btn" id="wsSettings" disabled>學習單設定</button>
           <button class="btn" id="importRoster" disabled>匯入名單</button>
+          <button class="btn" id="importClassroom" disabled>從 Classroom 匯入</button>
           <button class="btn" id="aiGrade" disabled>AI 批次評分</button>
           <button class="btn" id="exportGrades" disabled>匯出成績</button>
           <button class="btn btn-primary" id="pushClassroom" disabled>回寫 Classroom</button>
@@ -157,18 +158,40 @@
 
 <!-- 匯入名單 -->
 <div class="gate off" id="riModal">
-  <div class="panel" style="width:min(520px,100%)">
+  <div class="panel" style="width:min(560px,100%)">
     <h2>匯入班級名單</h2>
-    <p>填班級名稱，貼上名單（每行「座號,姓名」；空白或 Tab 分隔也可）。</p>
-    <div class="field"><label>班級名稱</label><input id="riClass" placeholder="例：501"></div>
-    <div class="field"><label>名單（每行一位）</label>
-      <textarea id="riText" rows="8" placeholder="1,王小明&#10;2,李小華&#10;3,陳大同" style="width:100%;font-size:14px;padding:9px 11px;border:1px solid var(--line2);border-radius:8px;font-family:inherit;resize:vertical;outline:none"></textarea></div>
+    <p>填年級、班級（數字），貼上或上傳名單（每行「座號,姓名」）。</p>
+    <div style="display:flex;gap:10px">
+      <div class="field" style="flex:1"><label>年級</label><input id="riGrade" inputmode="numeric" placeholder="例：5"></div>
+      <div class="field" style="flex:1"><label>班級</label><input id="riClass" inputmode="numeric" placeholder="例：1"></div>
+    </div>
+    <div class="field"><label>名單（每行一位；貼上或上傳擇一，兩者都填會合併）</label>
+      <textarea id="riText" rows="6" placeholder="1,王小明&#10;2,李小華&#10;3,陳大同" style="width:100%;font-size:14px;padding:9px 11px;border:1px solid var(--line2);border-radius:8px;font-family:inherit;resize:vertical;outline:none"></textarea></div>
+    <div class="field"><label>或上傳檔案（.csv / .xlsx）</label><input type="file" id="riFile" accept=".csv,.xlsx"></div>
     <div class="note" id="riCount"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
       <button class="btn" id="riCancel">取消</button>
       <button class="btn btn-primary" id="riGo">匯入</button>
     </div>
     <div class="note" id="riNote"></div>
+  </div>
+</div>
+
+<!-- 從 Google Classroom 匯入名單 -->
+<div class="gate off" id="crModal">
+  <div class="panel" style="width:min(640px,100%);max-height:88vh;overflow:auto">
+    <h2>從 Google Classroom 匯入名單</h2>
+    <p>選課程後自動讀取學生名字；若名字是「<code>510 01 王小明</code>」這種「年班 座號 姓名」格式，會自動拆出年級/班級/座號，你可以再檢查調整。</p>
+    <div class="field"><label>Classroom 課程</label><select id="crCourse"><option>載入中…</option></select></div>
+    <div id="crTableWrap" style="display:none">
+      <div class="note" id="crNote2" style="margin:0 0 8px"></div>
+      <div id="crTable" style="max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn" id="crCancel">取消</button>
+      <button class="btn btn-primary" id="crGo" disabled>匯入</button>
+    </div>
+    <div class="note" id="crNote"></div>
   </div>
 </div>
 
@@ -234,7 +257,7 @@ var DEFAULT_TEACHER_EMAIL = "boyin0304@slps.tn.edu.tw";
 var WORKBENCH = "http://127.0.0.1:8770"; // 串聯既有工作台（AI 評分／Classroom 回寫）
 
 var $=function(s){return document.querySelector(s)};
-var db=null, auth=null, curWs=null, curWsCfg={}, subsCache=[], WS_TITLES={};
+var db=null, auth=null, curWs=null, curWsCfg={}, subsCache=[], WS_TITLES={}, curCourse=null;
 function wsCollapsed(){try{return JSON.parse(localStorage.getItem('ws_collapsed')||'{}');}catch(e){return {};}}
 function setWsCollapsed(o){try{localStorage.setItem('ws_collapsed',JSON.stringify(o));}catch(e){}}
 function deriveId(url){try{var u=new URL(url);var parts=u.pathname.split('/').filter(function(p){return p&&p.toLowerCase()!=='index.html';});return parts.slice(-2).join('-')||parts[parts.length-1]||'ws';}catch(e){return '';}}
@@ -269,6 +292,7 @@ function onLoggedIn(u){
   $('#who').textContent='已登入 '+u.email;
   $('#logoutBtn').hidden=false;
   $('#importRoster').disabled=false;   // 名單匯入不需先選學習單
+  $('#importClassroom').disabled=false;
   $('#newWs').disabled=false;          // 新增學習單
   $('#aiBtn').hidden=false;            // AI 評分設定
   loadCourses();loadWorksheets();
@@ -283,15 +307,33 @@ $('#loginBtn').onclick=function(){
 $('#logoutBtn').onclick=function(){auth.signOut();location.reload();};
 $('#reloadBtn').onclick=function(){loadCourses();loadWorksheets();if(curWs)loadSubs(curWs);};
 
+function matchCourse(s){
+  if(s.grade==null||s.className==null)return '__other__';
+  var found=(window._courses||[]).filter(function(c){return c.grade===s.grade&&c.className===s.className;})[0];
+  return found?found.id:'__other__';
+}
+function currentSubs(){if(!curCourse)return subsCache;return subsCache.filter(function(s){return matchCourse(s)===curCourse;});}
 function loadCourses(){
   var box=$('#courses');box.innerHTML='<div class="note" style="padding:4px 10px">載入中…</div>';
   db.collection('courses').get().then(function(qs){
-    if(qs.empty){box.innerHTML='<div class="note" style="padding:4px 10px">尚無班級。P4 會做名單匯入。</div>';return;}
+    var list=[];qs.forEach(function(d){list.push(Object.assign({id:d.id},d.data()));});
+    list.sort(function(a,b){return (a.grade||0)*100+(a.className||0)-((b.grade||0)*100+(b.className||0));});
+    window._courses=list;
     box.innerHTML='';
-    qs.forEach(function(d){var c=d.data();var el=document.createElement('div');el.className='item';
-      el.innerHTML='<span>'+(c.name||d.id)+'</span>'+(c.section?'<span class="sub">'+c.section+'</span>':'');
+    list.forEach(function(c){var el=document.createElement('div');el.className='item'+(curCourse===c.id?' on':'');el.dataset.id=c.id;
+      el.innerHTML='<span>'+(c.name||c.id)+'</span>';
+      el.onclick=function(){curCourse=c.id;renderCourseList();renderSubs();};
       box.appendChild(el);});
+    var other=document.createElement('div');other.className='item'+(curCourse==='__other__'?' on':'');other.dataset.id='__other__';other.style.color='var(--muted)';
+    other.innerHTML='<span>其他（未匹配班級座號）</span>';
+    other.onclick=function(){curCourse='__other__';renderCourseList();renderSubs();};
+    box.appendChild(other);
+    if(!curCourse)curCourse=list.length?list[0].id:'__other__';
+    renderCourseList();renderSubs();
   }).catch(function(e){box.innerHTML='<div class="note" style="padding:4px 10px">讀取失敗：'+e.message+'</div>';});
+}
+function renderCourseList(){
+  document.querySelectorAll('#courses .item').forEach(function(el){el.classList.toggle('on',el.dataset.id===curCourse);});
 }
 function loadWorksheets(){
   var box=$('#worksheets');box.innerHTML='<div class="note" style="padding:4px 10px">載入中…</div>';
@@ -361,12 +403,16 @@ function wkLabel(s){
 }
 function wkSortKey(s){return s.grade!=null?(s.grade*10000+(s.className||0)*100+(s.studentId||0)):(s.seatNo||0);}
 function renderSubs(){
-  var rows=$('#rows');
+  var rows=$('#rows'),view=currentSubs();
+  var courseLabel=(window._courses||[]).filter(function(c){return c.id===curCourse;})[0];
+  courseLabel=courseLabel?courseLabel.name:(curCourse==='__other__'?'其他（未匹配班級座號）':'');
   if(!subsCache.length){rows.innerHTML='<tr><td colspan="7"><div class="empty"><div class="t">尚無繳交</div>學生從互動教材按「繳交學習單」後，資料會出現在這裡。</div></td></tr>';
+    setStats(0,0,0,null);return;}
+  if(!view.length){rows.innerHTML='<tr><td colspan="7"><div class="empty"><div class="t">'+courseLabel+' 沒有繳交</div>這份學習單有其他班級的繳交，換個班級看看。</div></td></tr>';
     setStats(0,0,0,null);return;}
   rows.innerHTML='';
   var graded=0,sum=0,gcount=0;
-  subsCache.forEach(function(s){
+  view.forEach(function(s){
     if(s.status==='graded')graded++;
     if(typeof s.totalScore==='number'){sum+=s.totalScore;gcount++;}
     var tr=document.createElement('tr');
@@ -382,7 +428,7 @@ function renderSubs(){
     tr.querySelector('button').onclick=function(){openDrawer(s);};
     rows.appendChild(tr);
   });
-  setStats(subsCache.length,graded,subsCache.length-graded,gcount?(sum/gcount):null);
+  setStats(view.length,graded,view.length-graded,gcount?(sum/gcount):null);
 }
 function setStats(sub,graded,pending,avg){
   $('#stSub').textContent=sub;$('#stGraded').textContent=graded;$('#stPending').textContent=pending;
@@ -408,9 +454,24 @@ function openDrawer(s){
 $('#drClose').onclick=function(){$('#drawer').classList.remove('on');};
 
 function gradeOne(s,render){
-  var note=render?$('#gradeNote'):null; if(note){note.style.color='#4f46e5';note.textContent='評分中（呼叫工作台 AI）…';}
+  var note=render?$('#gradeNote'):null;
   // 新式提交（有 openAnswers）只把開放題送 AI；score/experience 的正確率/完成度已由學習單自己算好（accuracyRate/experienceCompletion）
   var gradeInput=s.openAnswers?Object.assign({},s.openAnswers):(s.answers||{});
+  var hasOpen=Object.keys(gradeInput).length>0;
+  // 兩個計算系統：正確率（客觀題，學習單自算）與 AI（開放題）。沒有開放題就不必叫 AI，直接用正確率。
+  if(!hasOpen){
+    var g0={ok:true,autoScore:s.accuracyRate!=null?s.accuracyRate:null,aiScore:null,aiFeedback:'',perItem:[]};
+    s._grade=g0; s._final=(s.accuracyRate!=null?s.accuracyRate:'');
+    if(render){
+      $('#gradeBox').innerHTML=(s.accuracyRate!=null
+        ?'<div class="ans"><div class="q">正確率（無開放題，不需要 AI）</div><div class="a">'+s.accuracyRate+' 分</div></div>'
+        :'<div class="ans"><div class="q">此份沒有計分題也沒有開放題</div><div class="a" style="font-weight:400">請直接手動輸入最終分數。</div></div>');
+      $('#finalScore').value=s._final;
+      note.style.color='var(--ok)';note.textContent='此份沒有開放題，不需要呼叫 AI，已直接採用正確率。';
+    }
+    return Promise.resolve(g0);
+  }
+  if(note){note.style.color='var(--muted)';note.textContent='AI 評分處理中…';}
   return fetch(WORKBENCH+'/api/grade',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({answers:gradeInput,answerKey:curWsCfg.answerKey,rubric:curWsCfg.rubric,questions:curWsCfg.questions})})
     .then(function(r){return r.json();}).then(function(g){
@@ -422,15 +483,28 @@ function gradeOne(s,render){
       s._final=(final==null?'':final);
       if(render){
         var h='';
-        if(g.autoScore!=null)h+='<div class="ans"><div class="q">標準答案自動核對</div><div class="a">'+g.autoCorrect+' / '+g.autoTotal+' 題（'+g.autoScore+' 分）</div></div>';
-        if(g.aiScore!=null)h+='<div class="ans"><div class="q">AI 評分</div><div class="a">'+g.aiScore+' 分</div><div class="q" style="margin-top:6px">回饋</div><div class="a" style="font-weight:400">'+(g.aiFeedback||'')+'</div></div>';
+        if(objective!=null)h+='<div class="ans"><div class="q">正確率（客觀題）</div><div class="a">'+objective+' 分</div></div>';
+        if(g.aiScore!=null)h+='<div class="ans"><div class="q">AI 評分（開放題）</div><div class="a">'+g.aiScore+' 分</div><div class="q" style="margin-top:6px">回饋</div><div class="a" style="font-weight:400">'+(g.aiFeedback||'')+'</div></div>';
+        else if(g.aiFeedback)h+='<div class="ans" style="border-color:#fca5a5"><div class="q">AI 評分未完成</div><div class="a" style="font-weight:400">'+g.aiFeedback+'</div></div>';
         (g.perItem||[]).forEach(function(it){if(it.type==='objective')h+='<div class="ans" style="border-color:'+(it.correct?'#86efac':'#fca5a5')+'"><div class="q">'+it.qid+'（標準答案）'+(it.correct?' 正確':' 錯誤')+'</div><div class="a" style="font-weight:400">你的：'+fmtVal(it.got)+'　答案：'+fmtVal(it.expected)+'</div></div>';});
-        $('#gradeBox').innerHTML=h;
+        $('#gradeBox').innerHTML=h||'<p class="note">沒有可顯示的評分結果。</p>';
         $('#finalScore').value=s._final;
-        if(note){note.style.color='#15803d';note.textContent='評分完成，確認或調整最終分數後儲存。';}
+        if(note){
+          if(g.aiScore==null&&g.aiFeedback){note.style.color='var(--warn)';note.textContent='AI 評分未完成（見上方訊息），請先確認 AI 設定。';}
+          else{note.style.color='var(--ok)';note.textContent='評分完成，確認或調整最終分數後儲存。';}
+        }
       }
       return g;
-    }).catch(function(e){if(note){note.style.color='#b45309';note.textContent='評分失敗：'+e.message+'（工作台需啟動，且已在設定填好 AI Key）';}throw e;});
+    }).catch(function(e){
+      if(note){
+        var missingKey=/API Key|端點 URL|尚未填/.test(e.message);
+        note.style.color='var(--warn)';
+        note.textContent=missingKey
+          ? '缺少 AI 設定：請到「AI 設定」填寫反向代理與金鑰後再試一次。'
+          : '評分失敗：'+e.message+'（請確認工作台已啟動）';
+      }
+      throw e;
+    });
 }
 function saveScore(s){
   var f=$('#finalScore').value,note=$('#gradeNote');
@@ -445,15 +519,29 @@ function saveScore(s){
   }).catch(function(e){note.style.color='#b45309';note.textContent='儲存失敗：'+friendlyErr(e);});
 }
 function batchGrade(btn){
-  if(!subsCache.length){$('#mainNote').textContent='沒有可評分的繳交。';return;}
-  btn.disabled=true;var i=0,done=0,fail=0;
+  var list=currentSubs();
+  if(!list.length){$('#mainNote').textContent='目前這個班級沒有可評分的繳交。';return;}
+  btn.disabled=true;var i=0,done=0,fail=0,aiUsed=0,skippedAI=0,stoppedForKey=false;
   (function next(){
-    if(i>=subsCache.length){btn.disabled=false;renderSubs();$('#mainNote').textContent='批次評分完成：成功 '+done+'，失敗 '+fail+'。分數可在批改抽屜逐筆調整。';return;}
-    var s=subsCache[i];$('#mainNote').textContent='AI 批次評分中… '+(i+1)+' / '+subsCache.length;
+    if(i>=list.length||stoppedForKey){
+      btn.disabled=false;renderSubs();
+      var msg='批次評分完成：成功 '+done+'（其中 '+aiUsed+' 份呼叫 AI、'+skippedAI+' 份無開放題直接採正確率）';
+      if(fail)msg+='，失敗 '+fail;
+      if(stoppedForKey)msg='已中止：AI 設定缺少 API Key，請到「AI 設定」填寫後再試。已完成 '+done+' 份（未呼叫 AI 的部分不受影響）。';
+      msg+='。分數可在批改抽屜逐筆調整。';
+      $('#mainNote').textContent=msg;return;
+    }
+    var s=list[i];
+    var hasOpen=Object.keys(s.openAnswers||s.answers||{}).length>0;
+    $('#mainNote').textContent=(hasOpen?'AI 評分處理中…　':'採用正確率…　')+(i+1)+' / '+list.length;
     gradeOne(s,false).then(function(g){
+      if(hasOpen)aiUsed++; else skippedAI++;
       return db.collection('submissions').doc(s._id).update({autoScore:(g.autoScore!=null?g.autoScore:null),aiScore:(g.aiScore!=null?g.aiScore:null),aiFeedback:(g.aiFeedback||''),totalScore:(s._final===''?null:s._final),status:'graded',gradedAt:firebase.firestore.FieldValue.serverTimestamp()});
     }).then(function(){s.totalScore=(s._final===''?s.totalScore:s._final);s.status='graded';done++;i++;next();})
-      .catch(function(){fail++;i++;next();});
+      .catch(function(e){
+        if(/API Key|端點 URL|尚未填/.test(e.message||'')){stoppedForKey=true;next();return;}
+        fail++;i++;next();
+      });
   })();
 }
 
@@ -555,10 +643,11 @@ $('#settingsSave').addEventListener('click',function(){
 // P4-a 成績匯出 CSV（前端）
 function csvCell(v){v=(v==null?'':String(v));return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
 function exportCSV(){
-  if(!subsCache.length){$('#mainNote').textContent='沒有可匯出的繳交。';return;}
+  var list=currentSubs();
+  if(!list.length){$('#mainNote').textContent='目前這個班級沒有可匯出的繳交。';return;}
   var head=['年級','班級','學號','正確率','體驗完成度','AI分','最終分','狀態','繳交時間'];
   var lines=[head.join(',')];
-  subsCache.forEach(function(s){lines.push([(s.grade==null?'':s.grade),(s.className==null?'':s.className),(s.studentId==null?'':s.studentId),
+  list.forEach(function(s){lines.push([(s.grade==null?'':s.grade),(s.className==null?'':s.className),(s.studentId==null?'':s.studentId),
     (s.accuracyRate==null?'':s.accuracyRate),(s.experienceCompletion==null?'':s.experienceCompletion),
     (s.aiScore==null?'':s.aiScore),(s.totalScore==null?'':s.totalScore),
     (s.status==='graded'?'已評分':'已繳交'),fmtTime(s.submittedAt)].map(csvCell).join(','));});
@@ -566,27 +655,142 @@ function exportCSV(){
   var url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   var a=document.createElement('a');a.href=url;a.download=(curWs||'成績')+'_成績.csv';
   document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(url);a.remove();},600);
-  $('#mainNote').textContent='已匯出 '+subsCache.length+' 筆成績（CSV，含 BOM，可直接用 Excel 開）。';
+  $('#mainNote').textContent='已匯出 '+list.length+' 筆成績（CSV，含 BOM，可直接用 Excel 開）。';
 }
 $('#exportGrades').addEventListener('click',exportCSV);
 
-// P4-b 名單匯入（前端解析 → courses/{c}/students）
-function parseRoster(text){var out=[];(text||'').split(/\r?\n/).forEach(function(line){line=line.trim();if(!line)return;
-  var m=line.split(/[,\t]+/);if(m.length<2)m=line.split(/\s+/);var seat=(m[0]||'').trim(),name=m.slice(1).join(' ').trim();
-  if(!seat||!name)return;out.push({seatNo:isNaN(Number(seat))?seat:Number(seat),name:name});});return out;}
-$('#importRoster').addEventListener('click',function(){$('#riNote').textContent='';$('#riModal').classList.remove('off');});
+// P4-b 名單匯入（前端解析 → courses/{cid}/students；cid 由 年級+班級 決定）
+function courseId(grade,className){return 'g'+grade+'-c'+className;}
+function courseName(grade,className){return grade+'年'+className+'班';}
+function rowsToRoster(rows){
+  var out=[];
+  rows.forEach(function(r){
+    if(!r||!r.length)return;
+    if(r.length<2)r=String(r[0]||'').split(/\s+/);
+    var seat=String(r[0]==null?'':r[0]).trim(),name=r.slice(1).join(' ').trim();
+    if(!seat||!name||!/^\d+$/.test(seat))return;   // 非數字座號（多半是標題列）自動跳過
+    out.push({seatNo:Number(seat),name:name});
+  });
+  return out;
+}
+function parseRoster(text){
+  var rows=(text||'').split(/\r?\n/).map(function(l){return l.trim();}).filter(Boolean).map(function(l){return l.split(/[,\t]+/);});
+  return rowsToRoster(rows);
+}
+var _xlsxLoading=null;
+function ensureXLSX(){
+  if(global_XLSX())return Promise.resolve();
+  if(_xlsxLoading)return _xlsxLoading;
+  _xlsxLoading=new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload=res;s.onerror=rej;document.head.appendChild(s);
+  });
+  return _xlsxLoading;
+}
+function global_XLSX(){return typeof XLSX!=='undefined'?XLSX:null;}
+function readFileRows(file){
+  var ext=(file.name.split('.').pop()||'').toLowerCase();
+  if(ext==='csv'){
+    return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(rowsToRoster((r.result||'').split(/\r?\n/).map(function(l){return l.split(/[,\t]+/);})));};r.onerror=rej;r.readAsText(file,'utf-8');});
+  }
+  return ensureXLSX().then(function(){
+    return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){
+      try{var wb=global_XLSX().read(new Uint8Array(r.result),{type:'array'});
+        var sheet=wb.Sheets[wb.SheetNames[0]];
+        var rows=global_XLSX().utils.sheet_to_json(sheet,{header:1});
+        res(rowsToRoster(rows));
+      }catch(e){rej(e);}
+    };r.onerror=rej;r.readAsArrayBuffer(file);});
+  });
+}
+var _riFileRows=[];
+$('#importRoster').addEventListener('click',function(){$('#riNote').textContent='';$('#riCount').textContent='';$('#riFile').value='';_riFileRows=[];$('#riModal').classList.remove('off');});
 $('#riCancel').addEventListener('click',function(){$('#riModal').classList.add('off');});
-$('#riText').addEventListener('input',function(){var n=parseRoster(this.value).length;$('#riCount').textContent=n?('將匯入 '+n+' 位'):'';});
+function updateRiCount(){var n=parseRoster($('#riText').value).length+_riFileRows.length;$('#riCount').textContent=n?('將匯入 '+n+' 位'):'';}
+$('#riText').addEventListener('input',updateRiCount);
+$('#riFile').addEventListener('change',function(){
+  var f=this.files[0];if(!f){_riFileRows=[];updateRiCount();return;}
+  $('#riCount').textContent='讀取檔案中…';
+  readFileRows(f).then(function(rows){_riFileRows=rows;updateRiCount();})
+    .catch(function(e){$('#riCount').textContent='檔案讀取失敗：'+e.message;});
+});
 $('#riGo').addEventListener('click',function(){
-  var cls=$('#riClass').value.trim(),list=parseRoster($('#riText').value),note=$('#riNote');note.style.color='var(--warn)';
-  if(!cls){note.textContent='請填班級名稱。';return;}
-  if(!list.length){note.textContent='沒有解析到名單（每行「座號,姓名」）。';return;}
-  var cid=cls.replace(/[^0-9A-Za-z一-鿿_-]+/g,'')||'class',batch=db.batch();
-  batch.set(db.collection('courses').doc(cid),{name:cls,source:'manual'},{merge:true});
+  var grade=digitsOnly($('#riGrade').value),cls=digitsOnly($('#riClass').value);
+  var list=parseRoster($('#riText').value).concat(_riFileRows);
+  var note=$('#riNote');note.style.color='var(--warn)';
+  if(!grade||!cls){note.textContent='請填年級與班級（數字）。';return;}
+  if(!list.length){note.textContent='沒有解析到名單（每行「座號,姓名」，或上傳 CSV/XLSX）。';return;}
+  var cid=courseId(grade,cls),batch=db.batch();
+  batch.set(db.collection('courses').doc(cid),{grade:Number(grade),className:Number(cls),name:courseName(grade,cls),source:'manual'},{merge:true});
   list.forEach(function(st){batch.set(db.collection('courses').doc(cid).collection('students').doc(String(st.seatNo)),{seatNo:st.seatNo,name:st.name},{merge:true});});
   note.style.color='var(--muted)';note.textContent='匯入中…';
-  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+list.length+' 位到「'+cls+'」。';loadCourses();
+  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+list.length+' 位到「'+courseName(grade,cls)+'」。';loadCourses();
     setTimeout(function(){$('#riModal').classList.add('off');},1000);})
+    .catch(function(e){note.style.color='var(--warn)';note.textContent='匯入失敗：'+friendlyErr(e);});
+});
+function digitsOnly(v){return String(v||'').replace(/[^0-9]/g,'');}
+
+// ---- 從 Google Classroom 匯入名單（自動拆「年班 座號 姓名」格式，如「510 01 王小明」）----
+var CR={students:[],rows:[]};
+function parseClassroomName(full){
+  var m=String(full||'').trim().match(/^(\d)(\d{2})\s+(\d{1,2})\s+(.+)$/);
+  if(!m)return null;
+  return {grade:Number(m[1]),className:Number(m[2]),seatNo:Number(m[3]),name:m[4].trim()};
+}
+$('#importClassroom').addEventListener('click',function(){
+  $('#crNote').textContent='';$('#crTableWrap').style.display='none';$('#crGo').disabled=true;CR={students:[],rows:[]};
+  $('#crCourse').innerHTML='<option>載入課程中…</option>';$('#crModal').classList.remove('off');
+  fetch(WORKBENCH+'/api/google/courses').then(function(r){return r.json();}).then(function(r){
+    if(!r.ok){$('#crCourse').innerHTML='<option value="">'+(r.error||'讀取失敗（需啟動工作台並授權 Google）')+'</option>';return;}
+    $('#crCourse').innerHTML='<option value="">選課程…</option>'+r.courses.map(function(c){return '<option value="'+c.id+'">'+c.name+(c.section?(' · '+c.section):'')+'</option>';}).join('');
+  }).catch(function(e){$('#crCourse').innerHTML='<option value="">工作台未啟動？'+e.message+'</option>';});
+});
+$('#crCancel').addEventListener('click',function(){$('#crModal').classList.add('off');});
+$('#crCourse').addEventListener('change',function(){
+  var cid=this.value;$('#crTableWrap').style.display='none';$('#crGo').disabled=true;
+  if(!cid)return;
+  $('#crNote').textContent='讀取名單中…';
+  fetch(WORKBENCH+'/api/classroom/students?courseId='+encodeURIComponent(cid)).then(function(r){return r.json();}).then(function(r){
+    $('#crNote').textContent='';
+    if(!r.ok||!r.students||!r.students.length){$('#crNote').textContent=(r.error||'讀不到名單（可能需重新授權 Google 拿名單權限）');return;}
+    CR.students=r.students;
+    CR.rows=r.students.map(function(st,i){var p=parseClassroomName(st.name);
+      return {userId:st.userId,raw:st.name,grade:p?p.grade:'',className:p?p.className:'',seatNo:p?p.seatNo:(i+1),name:p?p.name:st.name,parsed:!!p};});
+    renderCrTable();
+  }).catch(function(e){$('#crNote').textContent='讀取失敗：'+e.message;});
+});
+function renderCrTable(){
+  var parsedCount=CR.rows.filter(function(r){return r.parsed;}).length;
+  $('#crNote2').textContent='自動辨識 '+parsedCount+' / '+CR.rows.length+' 位（格式如「510 01 王小明」）。辨識不到的請手動填年級/班級/座號，姓名可直接修改。';
+  var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
+    +'<th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">年級</th><th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">班級</th>'
+    +'<th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">座號</th><th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">姓名</th></tr></thead><tbody>';
+  CR.rows.forEach(function(r,i){h+='<tr'+(r.parsed?'':' style="background:#FFF7ED"')+'>'
+    +'<td style="padding:5px 8px;border-top:1px solid var(--line)"><input class="cr-g" data-i="'+i+'" value="'+r.grade+'" inputmode="numeric" style="width:52px;padding:4px 6px;border:1px solid var(--line2);border-radius:6px"></td>'
+    +'<td style="padding:5px 8px;border-top:1px solid var(--line)"><input class="cr-c" data-i="'+i+'" value="'+r.className+'" inputmode="numeric" style="width:52px;padding:4px 6px;border:1px solid var(--line2);border-radius:6px"></td>'
+    +'<td style="padding:5px 8px;border-top:1px solid var(--line)"><input class="cr-s" data-i="'+i+'" value="'+r.seatNo+'" inputmode="numeric" style="width:52px;padding:4px 6px;border:1px solid var(--line2);border-radius:6px"></td>'
+    +'<td style="padding:5px 8px;border-top:1px solid var(--line)"><input class="cr-n" data-i="'+i+'" value="'+r.name.replace(/"/g,'&quot;')+'" style="width:100%;padding:4px 6px;border:1px solid var(--line2);border-radius:6px"></td></tr>';});
+  h+='</tbody></table>';
+  $('#crTable').innerHTML=h;$('#crTableWrap').style.display='';$('#crGo').disabled=false;
+  ['cr-g','cr-c','cr-s','cr-n'].forEach(function(cls){document.querySelectorAll('.'+cls).forEach(function(inp){
+    inp.addEventListener('input',function(){var i=+inp.dataset.i,key={g:'grade',c:'className',s:'seatNo',n:'name'}[cls.split('-')[1]];
+      CR.rows[i][key]=cls==='cr-n'?inp.value:Number(digitsOnly(inp.value));});});});
+}
+$('#crGo').addEventListener('click',function(){
+  var note=$('#crNote');note.style.color='var(--warn)';
+  var bad=CR.rows.filter(function(r){return !r.grade||!r.className||!r.seatNo||!r.name;});
+  if(bad.length){note.textContent='有 '+bad.length+' 筆年級/班級/座號/姓名沒填完整，請補齊（標橘色的列）。';return;}
+  var byClass={};CR.rows.forEach(function(r){var cid=courseId(r.grade,r.className);(byClass[cid]=byClass[cid]||{grade:r.grade,className:r.className,rows:[]}).rows.push(r);});
+  var batch=db.batch();
+  Object.keys(byClass).forEach(function(cid){var c=byClass[cid];
+    batch.set(db.collection('courses').doc(cid),{grade:c.grade,className:c.className,name:courseName(c.grade,c.className),source:'classroom'},{merge:true});
+    c.rows.forEach(function(r){batch.set(db.collection('courses').doc(cid).collection('students').doc(String(r.seatNo)),
+      {seatNo:r.seatNo,name:r.name,classroomUserId:r.userId},{merge:true});});
+  });
+  note.style.color='var(--muted)';note.textContent='匯入中…';
+  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+CR.rows.length+' 位（含 Classroom 帳號，回寫成績可自動比對）。';loadCourses();
+    setTimeout(function(){$('#crModal').classList.add('off');},1200);})
     .catch(function(e){note.style.color='var(--warn)';note.textContent='匯入失敗：'+friendlyErr(e);});
 });
 
@@ -595,8 +799,8 @@ var CC={students:[]};
 function ccGet(p){return fetch(WORKBENCH+p).then(function(r){return r.json();});}
 function normName(s){return String(s||'').replace(/\s+/g,'').trim();}
 $('#pushClassroom').addEventListener('click',function(){
-  var graded=subsCache.filter(function(s){return s.totalScore!=null;});
-  if(!graded.length){$('#mainNote').textContent='沒有已評分的成績可回寫（先評分並儲存最終分）。';return;}
+  var graded=currentSubs().filter(function(s){return s.totalScore!=null;});
+  if(!graded.length){$('#mainNote').textContent='目前這個班級沒有已評分的成績可回寫（先評分並儲存最終分）。';return;}
   $('#ccNote').textContent='';$('#ccMapWrap').style.display='none';$('#ccGo').disabled=true;CC.students=[];
   $('#ccWork').innerHTML='<option value="">先選課程</option>';
   $('#ccCourse').innerHTML='<option>載入課程中…</option>';
@@ -621,20 +825,32 @@ $('#ccCourse').addEventListener('change',function(){
 });
 $('#ccWork').addEventListener('change',function(){ if(this.value&&$('#ccCourse').value) buildCCMap(); });
 function buildCCMap(){
-  var graded=subsCache.filter(function(s){return s.totalScore!=null;});
-  var opts='<option value="">— 不回寫 —</option>'+CC.students.map(function(st){return '<option value="'+st.userId+'">'+st.name+'</option>';}).join('');
-  var byName={};CC.students.forEach(function(st){byName[normName(st.name)]=st.userId;});
-  var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
-    +'<th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">學生</th><th style="padding:8px;position:sticky;top:0;background:#FCFCFD">分數</th><th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">對應 Classroom 學生</th></tr></thead><tbody>';
-  graded.forEach(function(s){h+='<tr><td style="padding:6px 8px;border-top:1px solid var(--line)">'+wkLabel(s)+'</td><td style="padding:6px 8px;border-top:1px solid var(--line);text-align:center">'+s.totalScore+'</td>'
-    +'<td style="padding:6px 8px;border-top:1px solid var(--line)"><select class="cc-sel" data-score="'+s.totalScore+'" style="width:100%;padding:5px;border:1px solid var(--line2);border-radius:6px">'+opts+'</select></td></tr>';});
-  h+='</tbody></table>';
-  $('#ccMap').innerHTML=h;
-  var sels=$('#ccMap').querySelectorAll('.cc-sel');
-  graded.forEach(function(s,i){var auto=s.studentName?(byName[normName(s.studentName)]||''):'';if(auto)sels[i].value=auto;});
-  var matched=Array.prototype.filter.call(sels,function(x){return x.value;}).length;
-  $('#ccMapNote').textContent='自動對應 '+matched+' / '+graded.length+' 位（新式身分無姓名時只能手動指定；對不到的可手動選或設「不回寫」）。'+(CC.students.length?'':('　名單為空'+(CC._studErr?('：'+CC._studErr+'（可能需重新授權 Google 拿名單權限）'):'')));
-  $('#ccMapWrap').style.display='';$('#ccGo').disabled=false;
+  var graded=currentSubs().filter(function(s){return s.totalScore!=null;});
+  // 若這個班級的名單是從 Classroom 匯入（存了 classroomUserId），可直接精準比對，不必靠姓名猜
+  var rosterP=(curCourse&&curCourse!=='__other__')
+    ? db.collection('courses').doc(curCourse).collection('students').get().then(function(qs){
+        var m={};qs.forEach(function(d){var v=d.data();if(v.classroomUserId)m[v.seatNo]=v.classroomUserId;});return m;})
+      .catch(function(){return {};})
+    : Promise.resolve({});
+  rosterP.then(function(bySeat){
+    var opts='<option value="">— 不回寫 —</option>'+CC.students.map(function(st){return '<option value="'+st.userId+'">'+st.name+'</option>';}).join('');
+    var byName={};CC.students.forEach(function(st){byName[normName(st.name)]=st.userId;});
+    var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
+      +'<th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">學生</th><th style="padding:8px;position:sticky;top:0;background:#FCFCFD">分數</th><th style="text-align:left;padding:8px;position:sticky;top:0;background:#FCFCFD">對應 Classroom 學生</th></tr></thead><tbody>';
+    graded.forEach(function(s){h+='<tr><td style="padding:6px 8px;border-top:1px solid var(--line)">'+wkLabel(s)+'</td><td style="padding:6px 8px;border-top:1px solid var(--line);text-align:center">'+s.totalScore+'</td>'
+      +'<td style="padding:6px 8px;border-top:1px solid var(--line)"><select class="cc-sel" data-score="'+s.totalScore+'" style="width:100%;padding:5px;border:1px solid var(--line2);border-radius:6px">'+opts+'</select></td></tr>';});
+    h+='</tbody></table>';
+    $('#ccMap').innerHTML=h;
+    var sels=$('#ccMap').querySelectorAll('.cc-sel');
+    var exact=0;
+    graded.forEach(function(s,i){
+      var auto=(s.studentId!=null&&bySeat[s.studentId])?bySeat[s.studentId]:(s.studentName?(byName[normName(s.studentName)]||''):'');
+      if(auto){sels[i].value=auto;if(s.studentId!=null&&bySeat[s.studentId])exact++;}
+    });
+    var matched=Array.prototype.filter.call(sels,function(x){return x.value;}).length;
+    $('#ccMapNote').textContent='自動對應 '+matched+' / '+graded.length+' 位'+(exact?('（其中 '+exact+' 位用 Classroom 帳號精準比對）'):'')+'（對不到的可手動選或設「不回寫」）。'+(CC.students.length?'':('　名單為空'+(CC._studErr?('：'+CC._studErr+'（可能需重新授權 Google 拿名單權限）'):'')));
+    $('#ccMapWrap').style.display='';$('#ccGo').disabled=false;
+  });
 }
 $('#ccGo').addEventListener('click',function(){
   var courseId=$('#ccCourse').value,courseWorkId=$('#ccWork').value,note=$('#ccNote'),self=this;

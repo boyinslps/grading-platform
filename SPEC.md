@@ -28,13 +28,14 @@
 ```
 submissions/{wsId}__{grade}-{className}-{studentId}   學生繳交（見學習單資料規範 §3 完整欄位）
 worksheets/{wsId}                        學習單設定（老師管理） { title, category, url, answerKey?, rubric?, questions? }
-courses/{courseId}                       班級名單（老師管理，用於 Classroom 回寫比對） { name, source, students/{sid}:{name,seatNo} }
+courses/{grade}-c{className}             班級名單（老師管理） { grade, className, name:"{grade}年{className}班", source:'manual'|'classroom',
+                                            students/{seatNo}:{seatNo, name, classroomUserId?} }  // classroomUserId 有值時，Classroom 回寫可精準比對，不必猜姓名
 feeds/{wsId}/messages/{autoId}           開放題即時同儕動態（見學習單資料規範 §4） { qid, text, tag, at }
 quizzes/{wsId}                           （L01 沿用）老師控制的「公布/還原」即時同步，與 submissions 是兩個獨立機制，見《互動教材進階規範》§2
 ```
 - **為何扁平**：Firestore 的 collection 查詢**不會回傳「只有子集合、本身不存在」的幽靈父文件**；若把繳交放 `worksheets/{ws}/submissions`，教師端就列不出還沒被老師建過設定的學習單。改用扁平 `submissions`＋`worksheetId` 欄位，教師端由繳交資料直接推出學習單清單。
 - **doc id**＝`{worksheetId}__{grade}-{className}-{studentId}`：同一人重繳覆蓋自己那筆。三個識別欄皆為數字，不採「班級＋座號＋姓名」——見資料規範 §1 的理由。
-- **評分兩路**：`score` 題由頁面自己算出 `accuracyRate`（客觀正解）；`open` 題送 AI 得 `aiScore`＋`aiFeedback`（`totalScore` 為教師確認後的最終分，走 `/api/grade`）。`experience` 題只計入 `experienceCompletion`，不進正確率。
+- **評分兩路（兩個獨立計算系統，不是一步流程）**：`score` 題由頁面自己算出 `accuracyRate`（客觀正解）；`open` 題送 AI 得 `aiScore`＋`aiFeedback`（`totalScore` 為教師確認後的最終分，走 `/api/grade`）。`experience` 題只計入 `experienceCompletion`，不進正確率。**沒有開放題時教師端完全不呼叫 AI**，直接拿 `accuracyRate` 當最終分。
 - **規則**：見同層 `firestore.rules`（含 L01 quizzes、submissions、worksheets、courses、feeds）。
 
 ## 3. Firestore 安全規則
@@ -75,11 +76,15 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 - 版面：左窄欄（班級/學習單）＋主區（繳交表格＋批改面板）。
 - 字體：Inter / Noto Sans TC；中性色（slate/indigo），表格為主體，卡片輔助。
 - 深淺色可留待後期；先做淺色專業感。
+- **篩選順序：先選班級、再選學習單**：左欄「班級」可點選（`curCourse`），固定多一個「其他」項專放 grade/className 對不到任何已匯入班級的繳交；選定班級後才看到該班在目前學習單下的繳交表格。批次操作（AI 批次評分／匯出 CSV／回寫 Classroom）都只作用在**目前篩選出的班級**，不是整份學習單的全部繳交。
+- **名單匯入三管道**：貼上文字（座號,姓名）／上傳 CSV 或 XLSX（XLSX 解析用 cdnjs 的 SheetJS，用到才載入）／從 Classroom 直接匯入（見 §4-c 命名慣例）。三者都寫進同一個 `courses/{grade}-c{className}/students` 結構。
 
 ## 8. 已決策（原「待確認」，教師已定案）
 - **繳交對應學生**：年級／班級／學號（三個數字），不用姓名、不需登入。見學習單資料規範 §1。
 - **評分粒度**：`score` 題自動核對算 `accuracyRate`；`experience` 題只算 `experienceCompletion`（不進正確率）；`open` 題送 AI／教師給 `totalScore`。三軌並存，非二選一。
 - **Classroom 回寫**：維持半自動——選課程＋作業，系統以姓名比對（新式提交無姓名時退化為手動指定，已知限制，見下）。
 
-## 9. 已知限制
-- **新識別模型（年級/班級/學號）沒有姓名**：Classroom 回寫的「自動姓名比對」對新式提交無法自動配對，只能在回寫 modal 手動逐筆指定。若某校需要自動配對，可在 `courses/{c}/students` 名單多存一個「學號」欄位，未來可加「用學號比對」的第二種自動配對模式（目前未實作）。
+## 9. 已知限制與後續強化
+- ~~新識別模型無姓名無法自動配對 Classroom~~ → **已解決**：從 Classroom 匯入名單時（教師端「從 Classroom 匯入」）會保留 `classroomUserId`，回寫時用「年級+班級+學號 → 名單 → classroomUserId」精準比對；手動匯入（CSV/貼上/xlsx）的班級仍只能靠姓名猜或手動指定。
+- Classroom 學生姓名若沒有照「{年級}{班級2碼} {座號} {姓名}」（如 `510 01 王小明`）的格式命名，自動解析會失敗，匯入表格會標橘色請老師手動填年級/班級/座號。
+- Firestore 免費（Spark）方案：1GiB 儲存、50K 讀/日、20K 寫/日、20K 刪/日、10GiB 傳輸/月（[官方頁面](https://firebase.google.com/pricing)）。單一學校規模（數百學生×每年數十份學習單）遠低於此上限；唯一要注意的情境是**一次性批次評分/寫入全校成千上萬筆**，那種操作應分批而非一次全做。

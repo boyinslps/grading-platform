@@ -10,16 +10,34 @@
 - [ ] **P2.5 真實測試**：教師部署規則 → 開 demo-worksheet.html（真檔非預覽）繳交 → teacher.html 應看到該筆。
 - [x] **P3 評分引擎＋批改**：server `/api/grade`（標準答案自動核對＋開放題丟 AI，回 autoScore/aiScore/aiFeedback/perItem，**已直接測通**：客觀 50 分、AI 開放題 100 分＋中文回饋）。server 加 CORS＋OPTIONS＋靜態服務 `評分平台/`。teacher.html 批改抽屜接上：逐筆評分、顯示逐題對錯與 AI 回饋、可改最終分、寫回 `submissions`（status='graded'）；工具列「AI 批次評分」整份跑。
 - [x] **P3.5 學習單設定面板**：teacher.html「學習單設定」按鈕 → 面板可編標準答案（逐題，多選用「、」）與評分規準（可增刪列）→ 存進 `worksheets/{ws}`；存後評分即套用。
-- [x] **P4 名單/匯出/Classroom**（完成）：
-  - [x] **P4-a 成績匯出 CSV**：teacher.html「匯出成績」→ 由 subsCache 組 CSV（座號/姓名/班級/自動/AI/最終/狀態/繳交時間）＋UTF-8 BOM → 前端 Blob 下載。
-  - [x] **P4-b 名單匯入**：teacher.html「匯入名單」對話框，貼「座號,姓名」（逗號/Tab/空白分隔皆可）→ 前端解析 → firestore batch 寫 `courses/{cid}` ＋ `courses/{cid}/students/{seat}`；即時預覽筆數、匯入後刷新左欄班級。
-  - [x] **P4-c Classroom**：後端 `/api/classroom/coursework`、`/students`、`/grades`（**已測**憑證與列課程/作業）。前端「回寫 Classroom」modal：選課程→選作業→拉名單→**以姓名自動對應**（對不到手動指定或「不回寫」）→送出並發還。`students` 需 `classroom.rosters.readonly` scope → **教師重新授權 Google** 才有名單。
-- [ ] **P4 名單/匯出/Classroom**：CSV 名單匯入、成績 CSV 匯出、Classroom 名單匯入＋成績回寫。
+- [x] **P4 名單/匯出/Classroom**（完成，P8 再強化見下）：
+  - [x] **P4-a 成績匯出 CSV**：改列年級/班級/學號/正確率/體驗完成度/AI分/最終分/狀態/繳交時間＋UTF-8 BOM，且**只匯出目前篩選的班級**（見 P8）。
+  - [x] **P4-b 名單匯入**：三管道（貼上文字／上傳 CSV 或 XLSX／從 Classroom 匯入），寫 `courses/{grade}-c{className}` ＋ `students/{seat}`（見 P8 詳述）。
+  - [x] **P4-c Classroom**：後端 `/api/classroom/coursework`、`/students`、`/grades`。前端回寫 modal：選課程→選作業→拉名單→自動對應（**已升級成可用 classroomUserId 精準比對**，見 P8）→送出並發還。
 - [~] **P5 Scratch 評分**：後端 `/api/grade-scratch`（.sb3 解 zip 讀 project.json → 盤點精靈/積木/變數/概念）**已測**。前端上傳 UI＋依 rubric/AI 給分＝下輪。
-- [x] **獨立專案化**：評分平台成為獨立資料夾/可獨立成 repo——自有 `server.py`（靜態，port 8780）＋`啟動評分平台.bat`（用旁邊工作台的 portable Python）＋`README.md`＋`.gitignore`。**連動**：AI/Classroom/金鑰仍走工作台 8770（CORS）；本專案不存金鑰。已煙霧測試通過（8780 服務 teacher.html/worksheets.json）。
+- [x] **獨立專案化**：評分平台成為獨立資料夾——自有 `server.py`（靜態，port 8780）＋`啟動評分平台.bat`（用旁邊工作台的 portable Python，已修正 CRLF/中文路徑問題）＋`README.md`＋`.gitignore`。**連動**：AI/Classroom/金鑰仍走工作台 8770（CORS）；本專案不存金鑰。已煙霧測試通過。**已 `git init` 並完成初始 commit**（`81d91dd`，本機、未推遠端）；**待教師指定遠端 repo 名稱/URL 才能 push**（曾詢問未得到回覆，不擅自建立）。
+- [x] **P7 學習單資料標準大改版（教師指定）**：新增權威規範 `引導規範/學習單資料與提交規範.md`（識別列年級/班級/學號數字限制、題型標註 score/experience/open、submissions 資料契約、即時同儕動態 feeds 集合）。**識別模型從「班級/座號/姓名」全面改為「年級/班級/學號」三個數字**（無真實資料，改版無包袱）：
+  - `student-submit.js` 重寫：注入識別列（含 localStorage 持久化＋數字過濾）、`autoCollect()` 依 `data-qid`/`data-qtype`/`data-correct` 分類並算 `accuracyRate`/`experienceCompletion`、confirm-before-submit、`StudentSubmit.liveFeed()`（讀寫 `feeds/{ws}/messages`，含搶先簽到匿名解決讀取權限競態）。**已在瀏覽器實測**：identity 收集、score/experience/open 三型收集、統計計算、寫入嘗試皆正確（因規則未部署而預期失敗於 permission-denied，非程式錯誤）。
+  - `demo-worksheet.html` 改為三題型示範＋live feed 參考實作。
+  - **L01（`materials/五年級上學期/L01.../06_成品.html`）依規範改版並實測**：加識別列（沿用 `wk_identity` key）；8 則投票卡與危害勾選標 `experience`（因這節是體驗課、故意不計分，呼應教學設計意圖）；危害推論短文標 `open`＋新增「同學們的推論」即時留言牆（讀寫同一份既有 db/auth，不重複載入 SDK）；新增「繳交學習單」按鈕（confirm 對話框顯示體驗完成度／開放題填寫狀況→寫入 `submissions`，同步寫一筆到 `feeds`）。**已推送 GitHub**（`d53dfe5..73f07b6`，SSH）。**觀察**：測試時發現 `quizzes/L01` 目前活生生處於「已公布」狀態（教師先前測試後未按還原）——與本次改版無關，但提醒教師記得用 `#admin`→「還原」，避免學生現在打開就看到答案。
+  - `firestore.rules` 重寫為完整版：`quizzes`＋`submissions`（含 grade/className/studentId 型別檢查）＋`worksheets`＋`courses`＋新增 `feeds`（留言長度上限、不可編輯、老師可刪）。**這是唯一該貼進 Firebase Console 的檔案**。
+  - `teacher.html` 改讀新欄位：`wkLabel()`/`wkSortKey()` 取代 seatNo/studentName 顯示與排序；表格合併「座號/姓名」為單一「學生」欄＋顯示正確率/完成度；CSV 匯出改列年級/班級/學號/正確率/體驗完成度；Classroom 對應表格顯示改用 wkLabel；`gradeOne()` 改只把 `openAnswers` 送 AI（不再誤把投票/勾選丟給 AI「評分」）、最終分優先採用學習單自算的 `accuracyRate`。**已實測**：無 console error，`wkLabel`/`wkSortKey` 行為正確。
+  - `SPEC.md` 全面更新（架構圖、資料模型指向新規範、API 表對齊實際路由、§8 決策定案、§9 新增「已知限制」：新身分模型無姓名，Classroom 自動姓名比對對新式提交失效，只能手動指定）。
+  - 各規範文件互相加了指向新規範的「延伸」連結，避免未來學習單製作漏看。
 - [ ] **P6 工作台整合**：成品階段一鍵綁定學習單/開評分台；rubric 編輯器。
+- [x] **P8 教師指定的一批強化**（名單/篩選/評分UX/學習單規範）：
+  - **名單匯入三管道**：貼上文字（原有）／上傳 CSV／上傳 XLSX（用 cdnjs 的 SheetJS，用到才動態載入，非事先綁定）／**從 Google Classroom 匯入**——按教師提供的命名慣例「`{年級}{班級2碼} {座號} {姓名}`」（例：`510 01 黃博胤`）自動 regex 解析出年級/班級/座號/姓名，解析不到的整列標橘色讓老師手動填；匯入時把 Classroom 的 `userId` 存進 `courses/{cid}/students/{seat}.classroomUserId`。roster 表單也改成年級+班級數字（不再是自由文字班級名），courseId 規則化為 `g{grade}-c{className}`。
+  - **回寫 Classroom 對應升級**：`buildCCMap()` 若目前班級是從 Classroom 匯入（存了 classroomUserId），改用「座號→classroomUserId」精準比對，不必再靠姓名猜；沒有 classroomUserId 的班級才退回姓名比對。解決了先前 SPEC §9 記錄的已知限制。
+  - **篩選順序＝先選班級再選學習單**：左欄「班級」變成可點選（`curCourse`），並固定加一個「其他」項，放 grade/className 對不到任何已匯入班級的繳交（`matchCourse()`）。`renderSubs`／`exportCSV`／`batchGrade`／`buildCCMap`／`pushClassroom` 全部改吃 `currentSubs()`（目前篩選出的班級），不再對整份學習單的所有班級一起動作。
+  - **AI 評分「兩個獨立計算系統」**：`gradeOne()` 先判斷有沒有開放題（`openAnswers`）——**沒有就完全不呼叫 AI**，直接拿 `accuracyRate` 當最終分，狀態顯示「此份沒有開放題，不需要呼叫 AI」；有開放題才顯示「AI 評分處理中…」。錯誤訊息區分「缺少 AI 設定（尚未填 API Key）」vs 一般失敗。`batchGrade()` 統計「呼叫 AI／直接採正確率／失敗」三種數量，遇到缺 API Key 直接中止並給明確訊息（不會對整批重複噴同一個錯誤）。
+  - **Firestore 免費方案容量**：查證官方頁面（1GiB 儲存／50K 讀/日／20K 寫/日／20K 刪/日／10GiB 傳輸/月），單一學校規模遠低於此，已記進 SPEC §9；唯一要注意的是「一次性批次寫入全校成千上萬筆」這種操作要分批。
+  - **學習單標準補兩條規則（寫進《學習單資料與提交規範》§5）**：① 每個學習單的 `#admin` 都要有「預覽學生模式」切換（暫時隱藏教師列，不必開新分頁）——**已在 L01 實作**（`previewModeBtn`＋浮動「返回教師模式」鍵）。② 使用者看得到的文字不得洩漏技術/除錯資訊（「Firestore」「規則」「部署」這類詞只能留在 `console.warn`）——**已修正** `student-submit.js` 的 `liveFeed()` 與 L01 的 `initFeed()` 錯誤訊息。
+  - **「推送」與「繳交學習單」明確拆成兩個獨立按鈕/動作**（原本推送藏在繳交的副作用裡，沒交卷就看不到同學動態）：L01 的危害推論短文加「📤 推送給同學看」按鈕（只寫 `feeds`），`demo-worksheet.html` 同步加對應示範（用 `StudentSubmit.liveFeed()` 回傳的 `post()`）；規範 §4／§7 都加了這條要求。
+  - 全部改動**已在瀏覽器實測**（Classroom 姓名解析 regex 對兩種真實格式都正確、`parseRoster` 正確跳過標題列、`matchCourse`/`currentSubs` 過濾邏輯正確、`gradeOne` 無開放題時不打網路請求且正確採用 accuracyRate、教師端所有新增 DOM 元素齊全、無 console error）。L01 已推送 GitHub（`73f07b6..7571f18`）。評分平台本機 commit 待遠端指定。
 
 ## 本輪做了什麼（最新在上）
+- **2026-09-08 · P8 教師指定強化批（名單三管道＋Classroom精準比對＋班級篩選＋AI兩系統＋學習單規範補強）**：詳見上方 P8 條目。額外查證：Firestore Spark 免費額度（1GiB/50K讀/20K寫/20K刪/10GiB傳輸）對單校規模綽綽有餘。中途修正一個誤判——「預覽學生模式」按鈕一開始被我錯放進 teacher.html，教師指正後改放回學習單自己的 `#admin` 列（正確位置）。L01 已推送 GitHub。
+- **2026-09-08 · P7 學習單資料標準大改版**：詳見上方階段勾選 P7 條目。摘要：新規範 `學習單資料與提交規範.md` 定案識別列（年級/班級/學號，數字）＋題型標註（score/experience/open）＋資料契約＋即時同儕動態；`student-submit.js`／`demo-worksheet.html`／`firestore.rules`／`teacher.html` 全面對齊並實測（瀏覽器端到端跑過 identity→collect→confirm→write 全流程，唯一失敗點是預期中的 permission-denied）；L01 依規範改版並**已推送 GitHub**（`73f07b6`）；**評分平台 `git init` 完成初始 commit，尚未有遠端可推**（此問題已詢問教師一次，未獲回覆，故不擅自建立 repo）。過程中修了兩個真實 bug：(1) `autoCollect` 對「data-qid 在外層 div、內層才是 input/textarea」的情況會誤抓 `textContent`；(2) 未作答的 checkbox/radio 給 Firestore 寫入 JS `undefined` 會直接丟例外（Firestore 不接受 undefined，需轉 null）——兩者都已修正並在瀏覽器實測驗證。
 - **2026-09-08 · 修錯誤訊息（權限不足診斷）**：使用者回報「新增學習單」貼網址時跳 `Missing or insufficient permissions.`——查證 firestore.rules 檔本身正確（write worksheets 需 isTeacher()，email 與 teacher.html 的 DEFAULT_TEACHER_EMAIL 一致），推斷**最可能原因是 firestore.rules 從未部署到 Firebase Console**（本機檔案不會自動生效，需手動貼到 Console 發布）。加 `friendlyErr(e)`：偵測 `permission-denied` 時，把原始 SDK 錯誤換成兩點可行動診斷（1. 規則未部署 2. 登入帳號需與 isTeacher() email 一致）＋顯示目前登入帳號；套用到新增學習單／學習單設定儲存／名單匯入／評分存檔四個寫入點。`.note` 加 `white-space:pre-line` 讓多行訊息正確換行。已驗證函式行為與訊息內容正確、無 console error。**待使用者操作**：到 Firebase Console 部署 firestore.rules 才能解除。
 - **2026-09-08 · P5後端＋獨立專案化**：（1）工作台 server.py 加 `grade_scratch`＋`_scratch_inventory`＋路由 `/api/grade-scratch`；用假 .sb3 **測通**盤點（精靈/積木/變數/概念偵測正確）。（2）依教師指示把評分平台做成**獨立專案**：新增 `評分平台/server.py`（靜態伺服器 8780）、`啟動評分平台.bat`（用 `..\工作台\runtime` 的 portable Python）、`README.md`、`.gitignore`。前端仍 `WORKBENCH=8770` 連動工作台拿 AI/Classroom（金鑰只在工作台）。8780 靜態服務已煙霧測試通過。**bat 修正**：原本存成 LF 換行導致 cmd 整批亂跑，已改 CRLF、且改用 `for /d` 尋找旁邊工作台的 portable Python（避免檔內出現中文路徑）。
 - **2026-09-08 · 教師指定（登錄檔＋分類收合＋讀標題＋Admin連結＋評分AI窗口）**：
@@ -43,13 +61,11 @@
 ## 下一步（下輪從這裡接）
 1. **P5 前端**：teacher.html 加「Scratch 評分」——上傳 .sb3 → 打 `/api/grade-scratch` → 顯示盤點（精靈/積木/概念勾選表）→ 依 rubric（概念清單對照）＋AI 給分。可綁到某學習單當一種題型。
 2. **P6 工作台整合**：工作台成品階段一鍵「登錄為學習單」（把 06_成品 網址/標題/分類寫進評分平台的 worksheets）。
-3. **把 L01 接上繳交**（待教師點頭再動 L01）：內嵌 student-submit，wsId=`g5-L01`。
-4. 待教師：**重啟工作台**＋**部署 firestore.rules**＋**重新授權 Google**（rosters scope）→ 端到端測試。用 `啟動評分平台.bat` 開 8780。
+3. **其他既有學習單依 P7 規範改版**（L01 已完成，之後每份新學習單都直接照《學習單資料與提交規範》做，不必再問）。
+4. 待教師：**部署 firestore.rules**（唯一真正阻擋端到端測試的事）＋**重新授權 Google**（rosters scope）＋**指定評分平台的遠端 repo**（名稱/URL，我才能 push；已本機 commit 隨時可推）。
 
-## 待教師確認（見 SPEC §8）
-- 繳交對應：座號＋班級是否足夠。
-- 評分粒度：逐題分 vs rubric 總分。
-- Classroom 作業對應方式。
+## 已知限制（見 SPEC §9）
+- 新身分模型（年級/班級/學號）無姓名，Classroom 回寫的自動姓名比對對新式提交無法自動配對，只能在 modal 手動指定。
 
 ## 注意
 - 金鑰只在 `工作台/config.json`／server；teacher.html 只放 public firebaseConfig。

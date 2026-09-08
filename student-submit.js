@@ -218,7 +218,7 @@
               var html='';qs.forEach(function(d){var m=d.data();
                 html+='<div class="msg">'+(m.tag?('<b>'+m.tag+'</b>'):'')+String(m.text||'').replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];})+'</div>';});
               list.innerHTML=html;
-            },function(e){console.warn('liveFeed 讀取失敗',e);var list=document.getElementById('wkfeed-list');if(list)list.innerHTML='<div class="empty">目前看不到同學動態（需老師部署 Firestore 規則）。</div>';});
+            },function(e){console.warn('liveFeed 讀取失敗',e);var list=document.getElementById('wkfeed-list');if(list)list.innerHTML='<div class="empty">現在看不到同學的留言，晚點再來看看。</div>';});
         });
       }).catch(function(e){console.warn('liveFeed 初始化失敗',e);});
       return {

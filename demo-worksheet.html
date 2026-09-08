@@ -40,7 +40,10 @@
   <div class="q" data-qid="q3" data-qtype="open">
     <span class="tag open">開放題 · 無正解，原文送出</span>
     <p class="font-bold mb-2">3. 用一句話說：看到可疑訊息你會先做什麼？</p>
-    <textarea rows="3" class="w-full border-2 border-slate-200 rounded-xl p-3" placeholder="寫下你的想法…"></textarea>
+    <textarea id="q3text" rows="3" class="w-full border-2 border-slate-200 rounded-xl p-3" placeholder="寫下你的想法…"></textarea>
+    <!-- 「推送」是獨立動作：把這題的想法貼進留言牆，跟最下面的「繳交學習單」無關（見學習單資料規範 §4）-->
+    <button id="q3push" class="mt-2 bg-violet-500 hover:bg-violet-600 text-white font-bold rounded-lg px-4 py-1.5 text-sm">推送到留言牆</button>
+    <span id="q3pushNote" class="text-xs text-slate-400 ml-2"></span>
   </div>
 
   <div id="feedHere"></div>
@@ -68,7 +71,14 @@ var FBCFG={
   messagingSenderId:"1034787516465",
   appId:"1:1034787516465:web:73c334b2ddad152c472510"
 };
-StudentSubmit.liveFeed({worksheetId:'demo', qid:'q3', mount:'#feedHere', firebaseConfig:FBCFG});
+var q3feed=StudentSubmit.liveFeed({worksheetId:'demo', qid:'q3', mount:'#feedHere', firebaseConfig:FBCFG});
+document.getElementById('q3push').onclick=function(){
+  var t=document.getElementById('q3text').value.trim();
+  var note=document.getElementById('q3pushNote');
+  if(!t){note.textContent='先寫一點再推送喔';return;}
+  note.textContent='推送中…';
+  q3feed.post(t).then(function(){note.textContent='已推送！';}).catch(function(e){note.textContent='推送失敗：'+e.message;});
+};
 StudentSubmit.init({
   worksheetId:'demo', title:'示範學習單', lessonPath:'demo',
   firebaseConfig:FBCFG, mount:'#submitHere'
