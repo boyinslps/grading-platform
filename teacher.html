@@ -216,16 +216,16 @@
 
     <h3 style="margin:16px 0 4px;font-size:14px">AI 評分</h3>
     <p class="note" style="margin:0 0 10px">聊天補全介面。填反向代理網址與金鑰，測試後選模型。規範見「引導規範/AI串接窗口設定規範.md」。</p>
-    <div class="field"><label>反向代理 URL（通常結尾 /v1）</label><input id="aiEndpoint" placeholder="https://你的反向代理/v1"></div>
-    <div class="field"><label>API Key</label><input id="aiKey" type="password" placeholder="sk-..."></div>
+    <div class="field"><label>反向代理 URL（通常結尾 /v1）</label><input id="aiEndpoint" autocomplete="off" spellcheck="false" placeholder="https://你的反向代理/v1"></div>
+    <div class="field"><label>API Key</label><input id="aiKey" type="password" autocomplete="new-password" placeholder="sk-..."></div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><button class="btn" id="aiTest">測試並列出模型</button><span class="note" id="aiTestNote" style="margin:0"></span></div>
     <div class="field"><label>模型</label><select id="aiModel"><option value="">（先測試以列出模型）</option></select></div>
 
     <div style="height:1px;background:var(--line);margin:16px 0"></div>
     <h3 style="margin:0 0 4px;font-size:14px">Google Classroom 授權</h3>
     <p class="note" style="margin:0 0 10px">用於匯入名單與回寫成績。建立/使用一個 Google OAuth 用戶端（桌面應用程式類型即可），並把下面這個網址加進它的「已授權的重新導向 URI」：<br><code style="font-size:11px">http://127.0.0.1:8780/oauth/callback</code></p>
-    <div class="field"><label>Google OAuth client_id</label><input id="gClient" placeholder="…apps.googleusercontent.com"></div>
-    <div class="field"><label>Google OAuth client_secret</label><input id="gSecret" type="password" placeholder="••••••••"></div>
+    <div class="field"><label>Google OAuth client_id</label><input id="gClient" autocomplete="off" spellcheck="false" placeholder="…apps.googleusercontent.com"></div>
+    <div class="field"><label>Google OAuth client_secret</label><input id="gSecret" type="password" autocomplete="new-password" placeholder="••••••••"></div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn" id="gAuth">授權 Google</button>
       <button class="btn" id="gLogout">清除授權</button>

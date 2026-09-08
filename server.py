@@ -410,7 +410,14 @@ class H(BaseHTTPRequestHandler):
             data = {}
         try:
             if u.path == "/api/settings":
-                cfg = read_config(); cfg.update(data); save_config(cfg)
+                cfg = read_config()
+                # 密鑰欄位「留空＝不變更」：避免前端欄位還沒載入就按下按鈕，把已存的金鑰洗掉。
+                # 要清除授權請用 /api/google/logout。
+                for k, v in (data or {}).items():
+                    if k in ("google_client_secret", "grade_key") and not str(v or "").strip() and cfg.get(k):
+                        continue
+                    cfg[k] = v
+                save_config(cfg)
                 return self._send(200, {"ok": True})
             if u.path == "/api/grade":
                 return self._send(200, grade_submission(data))
