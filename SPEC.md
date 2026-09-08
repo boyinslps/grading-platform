@@ -7,7 +7,8 @@
 - **目的**：協助教師「精準、快速」進行課堂評量與成績管理。
 - **對象**：教師（管理端）＋ 學生（作答繳交端）。
 - **介面**：教師端是**專業工具**——乾淨、資訊密度高、**不使用 emoji**（emoji 只屬於給小學生的互動教材）。學生端沿用既有互動教材風格。
-- **串聯既有系統**：後端特權操作（AI 評分、Google Classroom 成績回寫、金鑰）一律走既有 `工作台/server.py`（新增 API），不另存金鑰。資料庫沿用既有 Firebase 專案 `pcclass-94300`（Firestore）。
+- **獨立運作（2026-09-08 教師指定）**：評分平台**自帶**一份 AI 評分後端與 Google Classroom OAuth 授權（見 `評分平台/server.py`），設定存在**本專案自己的** `評分平台/config.json`，不依賴「工作台」（8770）也能完整運作。教師端「設定」面板同時管兩者。
+- **仍可選擇串聯工作台**：`teacher.html` 的 `WORKBENCH` 常數留了切換點——預設 `""`（同源，打自己 8780 後端）；若想改成集中用工作台管理設定，改成 `"http://127.0.0.1:8770"` 即可（工作台那邊的對應 API 仍在，見 `工作台/server.py`）。
 - **設計脈絡**：學生端只負責「把答案完整送進資料庫」；所有評分與成績邏輯集中在教師端＋server，避免答案／評分規則落在學生看得到的地方。
 
 ## 1. 系統架構
@@ -16,11 +17,12 @@
    └─(繳交)→ Firestore  submissions/{wsId}__{grade}-{className}-{studentId}
                          ▲                         │
 教師管理端 評分平台/teacher.html ─────────────────┘ (讀 submissions、寫回 score/feedback)
-   └─(AI評分 / Classroom回寫 / 匯入匯出)→ 工作台/server.py 新 API（持金鑰）
+   └─(AI評分 / Classroom匯入匯出/回寫)→ 評分平台/server.py 自己的 API（8780，持自己的 config.json）
+      （WORKBENCH 常數可切換改打工作台 8770，非必要）
 ```
 - **Firestore**：唯一的繳交／成績資料庫（client SDK，student 匿名、teacher Email/密碼）。
-- **teacher.html**：讀 Firestore 呈現＋批改；特權動作打 `http://127.0.0.1:8770` 的新 API。
-- **server.py**：新增評分／Classroom 成績／名單匯入匯出 API（讀 config.json 的 AI key、github、google token）。
+- **teacher.html**：讀 Firestore 呈現＋批改；特權動作打同源（8780）的 API，預設不需要工作台。
+- **評分平台/server.py**：AI 評分（`/api/grade`）、Google OAuth（`/api/google/*`、`/oauth/callback`）、Classroom（`/api/classroom/*`）、`/api/fetch-title`；設定讀寫 `/api/settings`（存本專案自己的 `config.json`，內含 `google_client_secret`／`grade_key`，**已加進 `.gitignore`，絕不上傳**）。
 
 ## 2. Firestore 資料模型
 > **權威定義在 `../引導規範/學習單資料與提交規範.md`**——識別欄（年級/班級/學號）、題型標註（score/experience/open）、`submissions` 文件的完整欄位形狀都在那份規範。這裡只列集合總覽，避免兩處定義漂移。
@@ -42,18 +44,23 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 > **完整內容見同層 `firestore.rules`**（可直接複製貼到 Firebase Console 發布），涵蓋：`quizzes`（L01 揭曉同步）、`submissions`（學生繳交，本人可寫、老師可讀寫）、`worksheets`（老師管理）、`courses`（名單）、`feeds`（同儕留言，本人可寫自己的、老師可刪）。
 - `isTeacher()`＝`request.auth.token.email == "boyin0304@slps.tn.edu.tw"`（沿用 L01）。
 
-## 4. server.py 新增 API（已實作）
+## 4. API（評分平台/server.py，8780，自己的 config.json）
 | 路由 | 功能 |
 |---|---|
-| POST `/api/grade` | 收 {answers, answerKey?, rubric?, questions?} → 標準答案核對＋開放題丟 AI（`grade_call`，見《AI串接窗口設定規範》）→ 回 {autoScore, aiScore, aiFeedback, perItem[]} |
-| POST `/api/grade-scratch` | 收 .sb3（base64）→ 解析 project.json → 回積木/精靈/概念盤點（評分邏輯待接） |
-| GET `/api/grade-models` | 列評分 AI 窗口可用模型（未設 grade_key 時回退主 AI） |
+| GET/POST `/api/settings` | 讀寫本專案設定：`grade_provider/endpoint/key/model`（AI）、`google_client_id/secret`、`google_token`（授權後自動存） |
+| POST `/api/grade` | 收 {answers, answerKey?, rubric?, questions?} → 標準答案核對＋開放題丟 AI（見《AI串接窗口設定規範》）→ 回 {autoScore, aiScore, aiFeedback, perItem[]} |
+| GET `/api/grade-models` | 列 AI 可用模型 |
 | GET `/api/fetch-title` | 讀某網址 `<title>`（新增學習單時自動帶標題） |
+| GET `/api/google/auth-url` | 產生 Google 授權連結（redirect 指向本專案 `:8780/oauth/callback`） |
+| GET `/oauth/callback` | 換 token、存進 config.json |
+| POST `/api/google/logout` | 清除已存的 Google token |
+| GET `/api/google/courses` | 列教師的 Classroom 課程 |
 | GET `/api/classroom/coursework` | 列某 Classroom 課程的作業 |
 | GET `/api/classroom/students` | 列某 Classroom 課程名單（需 `classroom.rosters.readonly` scope） |
 | POST `/api/classroom/grades` | 回寫分數到指定 courseWork（patch draft+assigned 後 `:return`） |
-| POST `/api/git-publish` | 把某節 `06_成品.html`＋`assets/` 整包 SSH push 到 GitHub Pages |
-- 名單匯入（CSV/貼上）與成績 CSV 匯出目前**純前端**處理（見 `teacher.html`），未走 server。
+| GET `/api/diagnostics` | AI／Google 連線狀態快覽 |
+- 名單匯入（CSV/貼上/XLSX）與成績 CSV 匯出**純前端**處理（見 `teacher.html`），不走 server。
+- `/api/grade-scratch`（Scratch 盤點）與 `/api/git-publish`（發布網站）**只存在工作台/server.py**，評分平台目前不需要這兩個（P5 Scratch 評分擱置中）。
 
 ## 5. 學生端「繳交」模組（可重用）
 - 規格詳見 `../引導規範/學習單資料與提交規範.md`；實作在 `student-submit.js`（`StudentSubmit.init()` 自動注入識別列＋繳交鈕）。

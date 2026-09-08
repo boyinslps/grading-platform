@@ -1,7 +1,8 @@
 # 評分平台 · 施工進度（PROGRESS）
 
 > 這是 /loop 每輪的記憶。每輪：讀 `SPEC.md`＋本檔 → 接續未完成階段 → 更新本檔（勾完成、寫下一步）。
-> 專案根目錄：`D:\自動化教案生成工作流\評分平台`。介面**不用 emoji**；後端串既有 `工作台/server.py`；資料庫 Firebase `pcclass-94300`。
+> 專案根目錄：`D:\自動化教案生成工作流\評分平台`。介面**不用 emoji**；資料庫 Firebase `pcclass-94300`。
+> **2026-09-08 起：後端已改為評分平台自己的 `server.py`（8780）獨立運作**（AI 評分＋Google OAuth／Classroom 都在這裡，設定存本專案自己的 `config.json`）；`工作台/server.py` 的對應 API 仍在，`teacher.html` 的 `WORKBENCH` 常數可切換要打哪一邊，預設打自己（同源，避免任何跨來源問題）。
 
 ## 階段勾選
 - [x] **P0 專案骨架**：SPEC.md、PROGRESS.md、teacher.html 設計骨架（無 emoji）、資料模型定案。
@@ -36,6 +37,12 @@
   - 全部改動**已在瀏覽器實測**（Classroom 姓名解析 regex 對兩種真實格式都正確、`parseRoster` 正確跳過標題列、`matchCourse`/`currentSubs` 過濾邏輯正確、`gradeOne` 無開放題時不打網路請求且正確採用 accuracyRate、教師端所有新增 DOM 元素齊全、無 console error）。L01 已推送 GitHub（`73f07b6..7571f18`）。評分平台本機 commit 待遠端指定。
 
 ## 本輪做了什麼（最新在上）
+- **2026-09-08 · 評分平台獨立運作（自帶 AI＋Google OAuth）＋修真正的 fetch 故障根因**：
+  - 教師回報「工作台後端也開了，還是 fetch 不到」。**實際診斷**：`netstat` 發現 8770／8780 上各同時卡了好幾個殘留的舊 server 行程（我先前測試時 `kill $(cat pidfile)` 沒有真的殺掉背景的 python.exe 子行程），瀏覽器的請求隨機打到「沒有 CORS 修正」的舊行程上，導致 fetch 間歇性失敗——外觀上就是「fetch 不到」。已用 `taskkill //F //PID` 逐一清乾淨，兩個 port 現在都只剩一個乾淨行程。**教訓**：以後起測試 server 要用 `netstat` 確認真的只有一個行程在聽，不能只信任 kill 有成功。
+  - 依教師指示，把 8770 依賴徹底拔掉：**評分平台/server.py 重寫**，自己實作一份完整的 AI 評分（`_llm_call`/`_llm_models`/`grade_call`/`grade_submission`/`_ai_grade`）與 Google OAuth／Classroom（`google_auth_url`/`google_exchange`/`google_access_token`/`google_courses`/`classroom_coursework`/`classroom_students`/`classroom_grades`），設定讀寫走自己的 `config.json`（`google_client_secret`／`grade_key` 這類金鑰**已加進 `.gitignore`**，且確認從未進過 git 歷史）。OAuth redirect 改成 `http://127.0.0.1:8780/oauth/callback`。
+  - `teacher.html`：`WORKBENCH` 常數改成空字串（同源，打自己的 8780），徹底消滅 CORS 疑慮；「AI 評分串接設定」modal 擴充成「設定」，同時放 AI（反向代理/Key/模型/測試）與 Google Classroom（client_id/secret/授權/清除授權/測試連線＋診斷），對應規範：教師要求「就設定裡面放 classroom 和 ai 的」。
+  - **暫緩 P5 Scratch**：依教師指示移除本輪之前加的 Scratch 評分 UI（按鈕/modal/JS），保留後端 `/api/grade-scratch` 留在工作台不動，之後要做再重新接。
+  - 已實測：新 server.py 語法通過；`/api/settings`、`/api/google/auth-url`（含 client_id 情境）、`/api/diagnostics` 直接 curl 測試正確；瀏覽器端到端測試 teacher.html 的「設定」modal 同源讀取成功、診斷按鈕正確回報未設定狀態，全程 0 個 console error。
 - **2026-09-08 · P8 教師指定強化批（名單三管道＋Classroom精準比對＋班級篩選＋AI兩系統＋學習單規範補強）**：詳見上方 P8 條目。額外查證：Firestore Spark 免費額度（1GiB/50K讀/20K寫/20K刪/10GiB傳輸）對單校規模綽綽有餘。中途修正一個誤判——「預覽學生模式」按鈕一開始被我錯放進 teacher.html，教師指正後改放回學習單自己的 `#admin` 列（正確位置）。L01 已推送 GitHub。
 - **2026-09-08 · P7 學習單資料標準大改版**：詳見上方階段勾選 P7 條目。摘要：新規範 `學習單資料與提交規範.md` 定案識別列（年級/班級/學號，數字）＋題型標註（score/experience/open）＋資料契約＋即時同儕動態；`student-submit.js`／`demo-worksheet.html`／`firestore.rules`／`teacher.html` 全面對齊並實測（瀏覽器端到端跑過 identity→collect→confirm→write 全流程，唯一失敗點是預期中的 permission-denied）；L01 依規範改版並**已推送 GitHub**（`73f07b6`）；**評分平台 `git init` 完成初始 commit，尚未有遠端可推**（此問題已詢問教師一次，未獲回覆，故不擅自建立 repo）。過程中修了兩個真實 bug：(1) `autoCollect` 對「data-qid 在外層 div、內層才是 input/textarea」的情況會誤抓 `textContent`；(2) 未作答的 checkbox/radio 給 Firestore 寫入 JS `undefined` 會直接丟例外（Firestore 不接受 undefined，需轉 null）——兩者都已修正並在瀏覽器實測驗證。
 - **2026-09-08 · 修錯誤訊息（權限不足診斷）**：使用者回報「新增學習單」貼網址時跳 `Missing or insufficient permissions.`——查證 firestore.rules 檔本身正確（write worksheets 需 isTeacher()，email 與 teacher.html 的 DEFAULT_TEACHER_EMAIL 一致），推斷**最可能原因是 firestore.rules 從未部署到 Firebase Console**（本機檔案不會自動生效，需手動貼到 Console 發布）。加 `friendlyErr(e)`：偵測 `permission-denied` 時，把原始 SDK 錯誤換成兩點可行動診斷（1. 規則未部署 2. 登入帳號需與 isTeacher() email 一致）＋顯示目前登入帳號；套用到新增學習單／學習單設定儲存／名單匯入／評分存檔四個寫入點。`.note` 加 `white-space:pre-line` 讓多行訊息正確換行。已驗證函式行為與訊息內容正確、無 console error。**待使用者操作**：到 Firebase Console 部署 firestore.rules 才能解除。
@@ -59,15 +66,15 @@
 - **2026-09-08 · 第1輪**：建立專案。寫 SPEC.md（架構／資料模型／API／階段）與本檔。建 teacher.html 教師端骨架（左欄班級＋學習單、主區 submissions 表格、批改面板；無 emoji、專業淺色；Firebase compat 已接，讀 `worksheets/{ws}/submissions`；目前空資料呈現空狀態）。更新 HTML 規範 §5.1 影片準則（大片外連／短示範內嵌）。
 
 ## 下一步（下輪從這裡接）
-1. **P5 前端**：teacher.html 加「Scratch 評分」——上傳 .sb3 → 打 `/api/grade-scratch` → 顯示盤點（精靈/積木/概念勾選表）→ 依 rubric（概念清單對照）＋AI 給分。可綁到某學習單當一種題型。
-2. **P6 工作台整合**：工作台成品階段一鍵「登錄為學習單」（把 06_成品 網址/標題/分類寫進評分平台的 worksheets）。
+1. **P6 工作台整合**：工作台成品階段一鍵「登錄為學習單」（把 06_成品 網址/標題/分類寫進評分平台的 worksheets）。
+2. **P5 Scratch 評分（擱置中，教師指示暫緩）**：之後要做的話，後端 `/api/grade-scratch` 已在工作台實作測通，只需搬到評分平台自己的 server.py（比照這輪搬 AI/Classroom 的做法）＋接前端上傳 UI。
 3. **其他既有學習單依 P7 規範改版**（L01 已完成，之後每份新學習單都直接照《學習單資料與提交規範》做，不必再問）。
-4. 待教師：**部署 firestore.rules**（唯一真正阻擋端到端測試的事）＋**重新授權 Google**（rosters scope）＋**指定評分平台的遠端 repo**（名稱/URL，我才能 push；已本機 commit 隨時可推）。
+4. 待教師：**部署 firestore.rules**（唯一真正阻擋端到端測試的事）＋**在 Google Cloud Console 把 `http://127.0.0.1:8780/oauth/callback` 加進 OAuth 用戶端的重新導向 URI**（獨立運作後 redirect 從 8770 換成 8780，需要這一步）＋**指定評分平台的遠端 repo**（名稱/URL，我才能 push；已本機 commit 隨時可推）。
 
 ## 已知限制（見 SPEC §9）
-- 新身分模型（年級/班級/學號）無姓名，Classroom 回寫的自動姓名比對對新式提交無法自動配對，只能在 modal 手動指定。
+- 新身分模型（年級/班級/學號）無姓名時，Classroom 回寫的自動姓名比對對新式提交無法自動配對，只能在 modal 手動指定；**有 classroomUserId 的班級（從 Classroom 匯入）已可精準比對，不受此限**。
 
 ## 注意
-- 金鑰只在 `工作台/config.json`／server；teacher.html 只放 public firebaseConfig。
+- 評分平台**已獨立運作**：AI Key／Google client_secret／token 存在 `評分平台/config.json`（已加進 `.gitignore`，確認未進 git 歷史）；`teacher.html` 只放 public firebaseConfig（Firebase Web API Key 本來就不是密鑰，官方文件說明存取控制交給 Security Rules）。工作台仍保有相同功能的 API，`WORKBENCH` 常數可切換要打哪邊。
 - 教師端讀 submissions 需 Email/密碼登入（isTeacher）；學生匿名只能 create 自己那筆。
 - 每完成一個可視成果，用 SendUserFile 給教師看方向。

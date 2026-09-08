@@ -210,14 +210,31 @@
 
 <!-- AI 評分串接設定 -->
 <div class="gate off" id="aiModal">
-  <div class="panel" style="width:min(480px,100%)">
-    <h2>AI 評分串接設定</h2>
-    <p>評分用的 AI（聊天補全介面）。填反向代理網址與金鑰，按「測試並列出模型」偵測可用模型後選一個。金鑰只存工作台後端，不放這裡。規範見「引導規範/AI串接窗口設定規範.md」。</p>
+  <div class="panel" style="width:min(560px,100%);max-height:88vh;overflow:auto">
+    <h2>設定</h2>
+    <p>評分平台<b>獨立運作</b>：Google Classroom 授權與 AI 評分都設定在這裡、存在這個專案自己的 config.json，不依賴工作台。</p>
+
+    <h3 style="margin:16px 0 4px;font-size:14px">AI 評分</h3>
+    <p class="note" style="margin:0 0 10px">聊天補全介面。填反向代理網址與金鑰，測試後選模型。規範見「引導規範/AI串接窗口設定規範.md」。</p>
     <div class="field"><label>反向代理 URL（通常結尾 /v1）</label><input id="aiEndpoint" placeholder="https://你的反向代理/v1"></div>
     <div class="field"><label>API Key</label><input id="aiKey" type="password" placeholder="sk-..."></div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><button class="btn" id="aiTest">測試並列出模型</button><span class="note" id="aiTestNote" style="margin:0"></span></div>
     <div class="field"><label>模型</label><select id="aiModel"><option value="">（先測試以列出模型）</option></select></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" id="aiCancel">關閉</button><button class="btn btn-primary" id="aiSave">儲存</button></div>
+
+    <div style="height:1px;background:var(--line);margin:16px 0"></div>
+    <h3 style="margin:0 0 4px;font-size:14px">Google Classroom 授權</h3>
+    <p class="note" style="margin:0 0 10px">用於匯入名單與回寫成績。建立/使用一個 Google OAuth 用戶端（桌面應用程式類型即可），並把下面這個網址加進它的「已授權的重新導向 URI」：<br><code style="font-size:11px">http://127.0.0.1:8780/oauth/callback</code></p>
+    <div class="field"><label>Google OAuth client_id</label><input id="gClient" placeholder="…apps.googleusercontent.com"></div>
+    <div class="field"><label>Google OAuth client_secret</label><input id="gSecret" type="password" placeholder="••••••••"></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn" id="gAuth">授權 Google</button>
+      <button class="btn" id="gLogout">清除授權</button>
+      <span class="note" id="gStat" style="margin:0"></span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center"><button class="btn" id="diagBtn">測試連線</button><span class="note" id="diagStat" style="margin:0"></span></div>
+    <div class="note" id="diagBox" style="white-space:pre-line;margin-top:6px"></div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn" id="aiCancel">關閉</button><button class="btn btn-primary" id="aiSave">儲存</button></div>
     <div class="note" id="aiNote"></div>
   </div>
 </div>
@@ -254,7 +271,8 @@ var firebaseConfig = {
   appId:"1:1034787516465:web:73c334b2ddad152c472510"
 };
 var DEFAULT_TEACHER_EMAIL = "boyin0304@slps.tn.edu.tw";
-var WORKBENCH = "http://127.0.0.1:8770"; // 串聯既有工作台（AI 評分／Classroom 回寫）
+var WORKBENCH = ""; // 空字串＝同源（自己的 8780 後端）。評分平台獨立運作，AI/Classroom 設定見「設定」面板。
+                     // 若想改連工作台（8770）集中管理設定，改成 "http://127.0.0.1:8770" 即可。
 
 var $=function(s){return document.querySelector(s)};
 var db=null, auth=null, curWs=null, curWsCfg={}, subsCache=[], WS_TITLES={}, curCourse=null;
@@ -564,18 +582,22 @@ $('#nwGo').addEventListener('click',function(){
   }).catch(function(e){note.style.color='var(--warn)';note.textContent='建立失敗：'+friendlyErr(e);});
 });
 
-// ---- AI 評分串接設定（評分專用窗口）----
+// ---- 設定：AI 評分 ＋ Google Classroom 授權（都存在評分平台自己的 config.json）----
 $('#aiBtn').addEventListener('click',function(){
-  $('#aiNote').textContent='';$('#aiTestNote').textContent='';
+  $('#aiNote').textContent='';$('#aiTestNote').textContent='';$('#diagStat').textContent='';$('#diagBox').textContent='';
   fetch(WORKBENCH+'/api/settings').then(function(r){return r.json();}).then(function(c){
-    $('#aiEndpoint').value=c.grade_endpoint||c.endpoint||'';$('#aiKey').value=c.grade_key||'';
+    $('#aiEndpoint').value=c.grade_endpoint||'';$('#aiKey').value=c.grade_key||'';
     var m=$('#aiModel');if(c.grade_model){m.innerHTML='<option value="'+c.grade_model+'">'+c.grade_model+'</option>';m.value=c.grade_model;}
+    $('#gClient').value=c.google_client_id||'';$('#gSecret').value=c.google_client_secret||'';
+    $('#gStat').textContent=(c.google_token&&c.google_token.access_token)?'已授權 Google':'尚未授權';
     $('#aiModal').classList.remove('off');
-  }).catch(function(e){$('#aiModal').classList.remove('off');$('#aiNote').textContent='讀取設定失敗（工作台需啟動）：'+e.message;});
+  }).catch(function(e){$('#aiModal').classList.remove('off');$('#aiNote').textContent='讀取設定失敗（評分平台後端需啟動）：'+e.message;});
 });
 $('#aiCancel').addEventListener('click',function(){$('#aiModal').classList.add('off');});
+function curCfg(){return {grade_provider:'openai',grade_endpoint:$('#aiEndpoint').value.trim(),grade_key:$('#aiKey').value,grade_model:$('#aiModel').value||''};}
+function integCfg(){return {google_client_id:$('#gClient').value.trim(),google_client_secret:$('#gSecret').value.trim()};}
 function saveGradeCfg(){return fetch(WORKBENCH+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({grade_provider:'openai',grade_endpoint:$('#aiEndpoint').value.trim(),grade_key:$('#aiKey').value,grade_model:$('#aiModel').value||''})}).then(function(r){return r.json();});}
+  body:JSON.stringify(Object.assign({},curCfg(),integCfg()))}).then(function(r){return r.json();});}
 $('#aiTest').addEventListener('click',function(){
   $('#aiTestNote').style.color='var(--muted)';$('#aiTestNote').textContent='測試中，取得模型清單…';
   saveGradeCfg().then(function(){return fetch(WORKBENCH+'/api/grade-models').then(function(r){return r.json();});}).then(function(r){
@@ -586,9 +608,28 @@ $('#aiTest').addEventListener('click',function(){
     $('#aiTestNote').style.color='var(--ok)';$('#aiTestNote').textContent='連線成功，'+r.models.length+' 個模型可選';
   }).catch(function(e){$('#aiTestNote').style.color='var(--warn)';$('#aiTestNote').textContent='失敗：'+e.message;});
 });
+$('#gAuth').addEventListener('click',function(){
+  saveGradeCfg().then(function(){return fetch(WORKBENCH+'/api/google/auth-url').then(function(r){return r.json();});}).then(function(r){
+    if(r.ok){window.open(r.url,'_blank');$('#gStat').textContent='已開啟授權分頁，同意後回來按「測試連線」確認。';}
+    else $('#gStat').textContent='失敗：'+r.error;
+  }).catch(function(e){$('#gStat').textContent='失敗：'+e.message;});
+});
+$('#gLogout').addEventListener('click',function(){
+  fetch(WORKBENCH+'/api/google/logout',{method:'POST'}).then(function(){$('#gStat').textContent='已清除授權';});
+});
+$('#diagBtn').addEventListener('click',function(){
+  saveGradeCfg().then(function(){$('#diagStat').textContent='診斷中…';
+    return fetch(WORKBENCH+'/api/diagnostics').then(function(r){return r.json();});
+  }).then(function(r){var d=r.diag||{};
+    function line(o,name){var s=o.ok===true?'成功':(o.ok===false?'失敗':(o.authorized||o.configured||o.client?'…':'未設定'));
+      return s+' '+name+'：'+(o.detail||(o.authorized?'已授權':o.client?'已填用戶端(未授權)':'未設定'));}
+    $('#diagBox').textContent=[line(d.ai||{},'AI'),line(d.google||{},'Google Classroom')].join('\n');
+    $('#diagStat').textContent='';
+  }).catch(function(e){$('#diagStat').textContent='失敗：'+e.message;});
+});
 $('#aiSave').addEventListener('click',function(){
   $('#aiNote').style.color='var(--muted)';$('#aiNote').textContent='儲存中…';
-  saveGradeCfg().then(function(r){if(r.ok){$('#aiNote').style.color='var(--ok)';$('#aiNote').textContent='已儲存。評分會用這個 AI 窗口。';setTimeout(function(){$('#aiModal').classList.add('off');},700);}
+  saveGradeCfg().then(function(r){if(r.ok){$('#aiNote').style.color='var(--ok)';$('#aiNote').textContent='已儲存。';setTimeout(function(){$('#aiModal').classList.add('off');},700);}
     else{$('#aiNote').style.color='var(--warn)';$('#aiNote').textContent='儲存失敗。';}
   }).catch(function(e){$('#aiNote').style.color='var(--warn)';$('#aiNote').textContent='儲存失敗：'+e.message;});
 });
