@@ -191,8 +191,12 @@ def grade_submission(payload):
 # ========== Google Classroom（自帶授權，redirect 指向 8780）==========
 def _http(url, method="GET", headers=None, data=None, timeout=90):
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        raw = r.read().decode("utf-8", "replace")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        raise RuntimeError(f"HTTP {e.code}: {body[:500]}") from None
     return json.loads(raw) if raw.strip() else {}
 
 
