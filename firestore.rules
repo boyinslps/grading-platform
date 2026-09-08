@@ -1,0 +1,63 @@
+rules_version = '2';
+// ============================================================
+// 完整 Firestore 規則（評分平台 ＋ 所有互動學習單，含 L01）
+// 部署：Firebase Console → Firestore Database → 規則 → 全選貼上這份 → 發布。
+// 這是唯一該貼進 Console 的檔案；學習單頁面尾端的規則註解只是說明，不會自動生效。
+// ============================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isTeacher() {
+      return request.auth != null && request.auth.token.email == "boyin0304@slps.tn.edu.tw";
+    }
+    function isNum(x) { return x is int || x is float; }
+
+    // --- 學習單即時對答案（L01 的「上傳答案／公布／還原」機制）---
+    match /quizzes/{quiz} {
+      allow read: if true;                 // 任何人可讀「是否公布」與正解
+      allow write: if isTeacher();         // 只有老師能上傳答案／公布／收回
+      match /results/{uid} {
+        allow read: if true;                              // 老師端統計用
+        allow create, update: if request.auth != null
+                              && request.auth.uid == uid; // 學生只能寫自己那筆
+      }
+    }
+
+    // --- 學生繳交（評分平台；見《學習單資料與提交規範》）---
+    // 文件 id：{worksheetId}__{grade}-{className}-{studentId}；識別欄一律數字。
+    // 學生（含匿名）可建立/覆蓋自己的繳交；只有老師能讀取全部、改分、刪除。
+    match /submissions/{sub} {
+      allow read: if isTeacher();
+      allow create, update: if request.auth != null
+        && (!('grade' in request.resource.data) || isNum(request.resource.data.grade))
+        && (!('className' in request.resource.data) || isNum(request.resource.data.className))
+        && (!('studentId' in request.resource.data) || isNum(request.resource.data.studentId));
+      allow delete: if isTeacher();
+    }
+
+    // --- 學習單設定（標準答案／評分規準／分類，老師管理）---
+    match /worksheets/{ws} {
+      allow read: if true;              // 學生端可讀題目設定（不含答案時）
+      allow write: if isTeacher();
+    }
+
+    // --- 班級與名單（老師管理，用於 Classroom 回寫比對）---
+    match /courses/{course} {
+      allow read, write: if isTeacher();
+      match /students/{sid} {
+        allow read, write: if isTeacher();
+      }
+    }
+
+    // --- 開放題即時同儕動態（留言牆；見《學習單資料與提交規範》§4）---
+    // 任何已登入（含匿名）可讀、可新增自己的留言；不可修改/刪除他人；老師可全權管理（含刪除不當內容）。
+    match /feeds/{ws}/messages/{msg} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 200;
+      allow update: if false;   // 留言不可編輯，避免事後竄改
+      allow delete: if isTeacher();
+    }
+  }
+}

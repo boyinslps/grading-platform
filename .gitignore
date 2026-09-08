@@ -1,0 +1,8 @@
+# 本專案不含金鑰；以下只排除系統/暫存
+.DS_Store
+Thumbs.db
+desktop.ini
+__pycache__/
+*.pyc
+.vscode/
+.idea/

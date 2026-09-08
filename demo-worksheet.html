@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>示範學習單｜三種題型＋繳交測試</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:'Noto Sans TC',system-ui,sans-serif;background:#f4f6fb;margin:0}
+  .wrap{max-width:680px;margin:0 auto;padding:0 16px 32px}
+  .q{background:#fff;border:2px solid #e2e8f0;border-radius:16px;padding:18px;margin:14px 0}
+  .tag{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:2px 9px;margin-bottom:8px}
+  .tag.score{background:#dbeafe;color:#1d4ed8}.tag.experience{background:#fef3c7;color:#b45309}.tag.open{background:#ede9fe;color:#6d28d9}
+  .opt{border:2px solid #e2e8f0;border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:600;display:inline-block}
+  .opt.on{border-color:#4f46e5;background:#eef0ff;color:#3730a3}</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="text-2xl font-extrabold text-indigo-700 pt-4">示範學習單（三種題型＋繳交測試）</h1>
+  <p class="text-slate-500 mb-2">這頁示範《學習單資料與提交規範》的三種題型標註方式，供之後製作學習單時參考。</p>
+
+  <!-- 計分題：score，有正解，算入正確率 -->
+  <div class="q" data-qid="q1" data-qtype="score" data-correct="假">
+    <span class="tag score">計分題 · 有正解，算正確率</span>
+    <p class="font-bold mb-2">1. 熱檸檬水能殺死癌細胞，是真的嗎？</p>
+    <div class="opts"><div class="opt" data-value="真">真</div><div class="opt" data-value="假">假</div></div>
+  </div>
+
+  <!-- 體驗題：experience，有正解但不計分，只算完成度 -->
+  <div class="q" data-qid="q2" data-qtype="experience" data-correct="花錢、健康、害人">
+    <span class="tag experience">體驗題 · 有正解但不計分，只算完成度</span>
+    <p class="font-bold mb-2">2. 相信假訊息可能造成哪些危害？（可複選，體驗用，不計分）</p>
+    <div class="opts">
+      <div class="opt" data-value="花錢">花錢買到沒用的東西</div>
+      <div class="opt" data-value="健康">傷害健康</div>
+      <div class="opt" data-value="害人">害家人也受騙</div>
+    </div>
+  </div>
+
+  <!-- 開放題：open，無正解，原文送出 -->
+  <div class="q" data-qid="q3" data-qtype="open">
+    <span class="tag open">開放題 · 無正解，原文送出</span>
+    <p class="font-bold mb-2">3. 用一句話說：看到可疑訊息你會先做什麼？</p>
+    <textarea rows="3" class="w-full border-2 border-slate-200 rounded-xl p-3" placeholder="寫下你的想法…"></textarea>
+  </div>
+
+  <div id="feedHere"></div>
+  <div id="submitHere"></div>
+</div>
+
+<script>
+// 單選/多選點選行為（切換 .on；純示範，非模組必要部分）
+document.querySelectorAll('[data-qid]').forEach(function(box){
+  var multi=box.getAttribute('data-qtype')==='experience';
+  box.querySelectorAll('.opt').forEach(function(o){o.onclick=function(){
+    if(multi)o.classList.toggle('on');
+    else{box.querySelectorAll('.opt').forEach(function(x){x.classList.remove('on')});o.classList.add('on');}
+  };});
+});
+</script>
+
+<script src="student-submit.js"></script>
+<script>
+var FBCFG={
+  apiKey:"AIzaSyAaodBvsP-BSovON14izt22DOXeH40TTGM",
+  authDomain:"pcclass-94300.firebaseapp.com",
+  projectId:"pcclass-94300",
+  storageBucket:"pcclass-94300.firebasestorage.app",
+  messagingSenderId:"1034787516465",
+  appId:"1:1034787516465:web:73c334b2ddad152c472510"
+};
+StudentSubmit.liveFeed({worksheetId:'demo', qid:'q3', mount:'#feedHere', firebaseConfig:FBCFG});
+StudentSubmit.init({
+  worksheetId:'demo', title:'示範學習單', lessonPath:'demo',
+  firebaseConfig:FBCFG, mount:'#submitHere'
+  // collect 省略 → 自動掃 [data-qid][data-qtype]（q1 score、q2 experience 多選、q3 open）
+});
+</script>
+</body>
+</html>

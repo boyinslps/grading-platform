@@ -1,0 +1,11 @@
+{
+  "_說明": "學習單清單。完成一份互動學習單後，把它的公開網址加到 worksheets 陣列即可；教師端會讀這份檔＋Firebase 一起顯示，標題直接讀網頁本身的 <title>。",
+  "_欄位": {
+    "id": "學習單代碼，需與互動教材裡 StudentSubmit 的 worksheetId 一致（例：g5-L01）",
+    "category": "分類：四上／四下／五上／五下（可留空＝未分類）",
+    "url": "學習單公開網址（GitHub Pages）；教師端會用 網址#admin 開啟該學習單的答案設定頁"
+  },
+  "worksheets": [
+    { "id": "g5-L01", "category": "五上", "url": "https://boyinslps.github.io/pcclass/g5/L01/" }
+  ]
+}
