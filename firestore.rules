@@ -35,7 +35,7 @@ service cloud.firestore {
       allow delete: if isTeacher();
     }
 
-    // --- 學習單設定（標準答案／評分規準／分類，老師管理）---
+    // --- 學習單設定（分數計算 scoring／評分規準 rubric／分類，老師管理；標準答案在學習單自己的 #admin，不存這裡）---
     match /worksheets/{ws} {
       allow read: if true;              // 學生端可讀題目設定（不含答案時）
       allow write: if isTeacher();

@@ -61,6 +61,14 @@
   .ans{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
   .ans .q{font-size:12px;color:var(--muted);margin-bottom:3px}.ans .a{font-size:14px;font-weight:500}
   .x{width:30px;height:30px;border-radius:7px;border:1px solid var(--line2);background:var(--surface);display:grid;place-items:center;color:var(--muted)}
+  .tabbar{display:flex;gap:18px;margin:14px 0 16px;border-bottom:1px solid var(--line)}
+  .tabbar .tab-btn{font-size:13px;font-weight:600;color:var(--muted);background:transparent;border:none;border-bottom:2px solid transparent;padding:0 0 9px;cursor:pointer}
+  .tabbar .tab-btn:hover{color:var(--ink)}
+  .tabbar .tab-btn.on{color:var(--accent-ink);border-bottom-color:var(--accent)}
+  .tab-sub{display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 14px}
+  .tab-sub .tab-btn{font-size:12px;font-weight:600;color:var(--muted);background:var(--surface);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;cursor:pointer}
+  .tab-sub .tab-btn:hover{background:#FAFAFB}
+  .tab-sub .tab-btn.on{background:var(--accent-soft);border-color:#DDE0FF;color:var(--accent-ink)}
   @media(max-width:820px){.work{grid-template-columns:1fr}.side{border-right:none;border-bottom:1px solid var(--line)}}
 </style>
 </head>
@@ -71,7 +79,7 @@
     <div class="brand"><b>評分平台</b><span>課堂評量與成績管理</span></div>
     <div style="flex:1"></div>
     <span id="who" class="note" style="margin:0"></span>
-    <button class="btn" id="aiBtn" hidden>AI 設定</button>
+    <button class="btn" id="aiBtn" hidden>設定</button>
     <button class="btn" id="reloadBtn">重新整理</button>
     <button class="btn" id="logoutBtn" hidden>登出</button>
   </header>
@@ -89,9 +97,6 @@
         <div><h1 id="wsTitle">尚未選擇學習單</h1><div class="meta" id="wsMeta">從左側選一份學習單，檢視學生繳交與批改。</div></div>
         <div class="tools">
           <button class="btn" id="wsSettings" disabled>學習單設定</button>
-          <button class="btn" id="importRoster" disabled>匯入名單</button>
-          <button class="btn" id="importClassroom" disabled>從 Classroom 匯入</button>
-          <button class="btn" id="importClassroomAll" disabled>批量匯入全部班級</button>
           <button class="btn" id="aiGrade" disabled>AI 批次評分</button>
           <button class="btn" id="exportGrades" disabled>匯出成績</button>
           <button class="btn btn-primary" id="pushClassroom" disabled>回寫 Classroom</button>
@@ -100,15 +105,24 @@
 
       <div class="card" id="settingsPanel" hidden style="margin-bottom:18px;padding:16px 18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <b style="font-size:14px">學習單設定 · 標準答案與評分規準</b>
+          <b style="font-size:14px">學習單設定 · 分數計算與評分規準</b>
           <button class="btn btn-primary" id="settingsSave">儲存設定</button>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">填了標準答案的題目＝自動核對；留空的題目＝開放題交 AI（可搭配下方規準）。</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
           <div style="flex:2;min-width:160px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">標題</label><input id="setTitle" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px;outline:none"></div>
           <div style="flex:1;min-width:120px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">分類</label><select id="setCat" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"><option value="">未分類</option><option>四上</option><option>四下</option><option>五上</option><option>五下</option></select></div>
         </div>
-        <div id="answerKeyBox" style="margin-bottom:14px"></div>
+        <div id="wsAdminBox" style="margin-bottom:14px"></div>
+        <div id="scoringBox" style="margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:4px">分數計算</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">預設：非開放題（計分題／體驗題）滿分 100，每題答錯或未完成扣 1 分；若這份有開放題，會從總分保留一部分給 AI 評分開放題（其餘才是非開放題滿分）。標準答案在學習單自己的 Admin 設定，這裡只管「怎麼算分」。</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <div style="flex:1;min-width:100px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">總分</label><input id="scBase" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+            <div style="flex:1;min-width:130px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">每題預設扣分</label><input id="scDeduct" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+            <div style="flex:1;min-width:150px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">開放題（AI）保留分數</label><input id="scOpenWeight" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+          </div>
+          <div id="scItemsBox"></div>
+        </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <b style="font-size:13px">評分規準（開放題用）</b>
           <button class="btn" id="addCriterion" style="padding:4px 10px">新增規準</button>
@@ -157,66 +171,6 @@
   </div>
 </div>
 
-<!-- 匯入名單 -->
-<div class="gate off" id="riModal">
-  <div class="panel" style="width:min(560px,100%)">
-    <h2>匯入班級名單</h2>
-    <p>填年級、班級（數字），貼上或上傳名單（每行「座號,姓名」）。</p>
-    <div style="display:flex;gap:10px">
-      <div class="field" style="flex:1"><label>年級</label><input id="riGrade" inputmode="numeric" placeholder="例：5"></div>
-      <div class="field" style="flex:1"><label>班級</label><input id="riClass" inputmode="numeric" placeholder="例：1"></div>
-    </div>
-    <div class="field"><label>名單（每行一位；貼上或上傳擇一，兩者都填會合併）</label>
-      <textarea id="riText" rows="6" placeholder="1,王小明&#10;2,李小華&#10;3,陳大同" style="width:100%;font-size:14px;padding:9px 11px;border:1px solid var(--line2);border-radius:8px;font-family:inherit;resize:vertical;outline:none"></textarea></div>
-    <div class="field"><label>或上傳檔案（.csv / .xlsx）</label><input type="file" id="riFile" accept=".csv,.xlsx"></div>
-    <div class="note" id="riCount"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
-      <button class="btn" id="riCancel">取消</button>
-      <button class="btn btn-primary" id="riGo">匯入</button>
-    </div>
-    <div class="note" id="riNote"></div>
-  </div>
-</div>
-
-<!-- 從 Google Classroom 匯入名單 -->
-<div class="gate off" id="crModal">
-  <div class="panel" style="width:min(640px,100%);max-height:88vh;overflow:auto">
-    <h2>從 Google Classroom 匯入名單</h2>
-    <p>選課程後自動讀取學生名字；若名字是「<code>510 01 王小明</code>」這種「年班 座號 姓名」格式，會自動拆出年級/班級/座號，你可以再檢查調整。</p>
-    <div class="field"><label>Classroom 課程</label><select id="crCourse"><option>載入中…</option></select></div>
-    <div id="crTableWrap" style="display:none">
-      <div class="note" id="crNote2" style="margin:0 0 8px"></div>
-      <div id="crTable" style="max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button class="btn" id="crCancel">取消</button>
-      <button class="btn btn-primary" id="crGo" disabled>匯入</button>
-    </div>
-    <div class="note" id="crNote"></div>
-  </div>
-</div>
-
-<!-- 批量匯入全部 Classroom 班級 -->
-<div class="gate off" id="cbModal">
-  <div class="panel" style="width:min(900px,100%);max-height:90vh;overflow:auto">
-    <h2>批量匯入全部班級</h2>
-    <p>一次讀取你所有 Classroom 課程的名單，自動拆出年級／班級／座號。認得三種寫法：<code>506 03陳小明</code>、<code>506 03 陳小明</code>、<code>陳小明 506 13</code>（全形數字也認）。名字沒帶學號時，會再試著從課程名稱（如「<code>彈-成功自造機 406</code>」）推出年班，只留座號給你補。能解析的直接匯入；<b>其餘全部列在下方例外清單</b>，補齊或勾選略過後再一起寫入。</p>
-    <div class="note" id="cbProgress"></div>
-    <div id="cbResult" style="display:none">
-      <h3 style="margin:14px 0 6px;font-size:14px">將建立／更新的班級</h3>
-      <div id="cbSummary" style="max-height:26vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
-      <h3 style="margin:16px 0 6px;font-size:14px">例外（需手動處理）<span id="cbExcCount" style="font-weight:400;color:var(--muted)"></span></h3>
-      <div id="cbExcWrap" style="max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-      <button class="btn" id="cbCancel">關閉</button>
-      <button class="btn" id="cbScan">重新掃描</button>
-      <button class="btn btn-primary" id="cbGo" disabled>匯入</button>
-    </div>
-    <div class="note" id="cbNote"></div>
-  </div>
-</div>
-
 <!-- 新增學習單 -->
 <div class="gate off" id="nwModal">
   <div class="panel" style="width:min(440px,100%)">
@@ -232,31 +186,87 @@
 
 <!-- AI 評分串接設定 -->
 <div class="gate off" id="aiModal">
-  <div class="panel" style="width:min(560px,100%);max-height:88vh;overflow:auto">
+  <div class="panel" style="width:min(760px,100%);max-height:90vh;overflow:auto">
     <h2>設定</h2>
-    <p>評分平台<b>獨立運作</b>：Google Classroom 授權與 AI 評分都設定在這裡、存在這個專案自己的 config.json，不依賴工作台。</p>
+    <p>評分平台<b>獨立運作</b>：AI 評分、Google Classroom 授權、班級名單匯入都整合在這裡，設定存在這個專案自己的 config.json，不依賴工作台。</p>
 
-    <h3 style="margin:16px 0 4px;font-size:14px">AI 評分</h3>
-    <p class="note" style="margin:0 0 10px">聊天補全介面。填反向代理網址與金鑰，測試後選模型。規範見「引導規範/AI串接窗口設定規範.md」。</p>
-    <div class="field"><label>反向代理 URL（通常結尾 /v1）</label><input id="aiEndpoint" autocomplete="off" spellcheck="false" placeholder="https://你的反向代理/v1"></div>
-    <div class="field"><label>API Key</label><input id="aiKey" type="password" autocomplete="new-password" placeholder="sk-..."></div>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><button class="btn" id="aiTest">測試並列出模型</button><span class="note" id="aiTestNote" style="margin:0"></span></div>
-    <div class="field"><label>模型</label><select id="aiModel"><option value="">（先測試以列出模型）</option></select></div>
-
-    <div style="height:1px;background:var(--line);margin:16px 0"></div>
-    <h3 style="margin:0 0 4px;font-size:14px">Google Classroom 授權</h3>
-    <p class="note" style="margin:0 0 10px">用於匯入名單與回寫成績。建立/使用一個 Google OAuth 用戶端（桌面應用程式類型即可），並把下面這個網址加進它的「已授權的重新導向 URI」：<br><code style="font-size:11px">http://127.0.0.1:8780/oauth/callback</code></p>
-    <div class="field"><label>Google OAuth client_id</label><input id="gClient" autocomplete="off" spellcheck="false" placeholder="…apps.googleusercontent.com"></div>
-    <div class="field"><label>Google OAuth client_secret</label><input id="gSecret" type="password" autocomplete="new-password" placeholder="••••••••"></div>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-      <button class="btn" id="gAuth">授權 Google</button>
-      <button class="btn" id="gLogout">清除授權</button>
-      <span class="note" id="gStat" style="margin:0"></span>
+    <div class="tabbar" id="setTabbar">
+      <button class="tab-btn on" data-tab="ai">AI 評分</button>
+      <button class="tab-btn" data-tab="google">Google Classroom</button>
+      <button class="tab-btn" data-tab="import">名單匯入</button>
     </div>
-    <div style="display:flex;gap:8px;align-items:center"><button class="btn" id="diagBtn">測試連線</button><span class="note" id="diagStat" style="margin:0"></span></div>
-    <div class="note" id="diagBox" style="white-space:pre-line;margin-top:6px"></div>
 
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn" id="aiCancel">關閉</button><button class="btn btn-primary" id="aiSave">儲存</button></div>
+    <div data-page="ai">
+      <p class="note" style="margin:0 0 10px">聊天補全介面。填反向代理網址與金鑰，測試後選模型。規範見「引導規範/AI串接窗口設定規範.md」。</p>
+      <div class="field"><label>反向代理 URL（通常結尾 /v1）</label><input id="aiEndpoint" autocomplete="off" spellcheck="false" placeholder="https://你的反向代理/v1"></div>
+      <div class="field"><label>API Key</label><input id="aiKey" type="password" autocomplete="new-password" placeholder="sk-..."></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><button class="btn" id="aiTest">測試並列出模型</button><span class="note" id="aiTestNote" style="margin:0"></span></div>
+      <div class="field"><label>模型</label><select id="aiModel"><option value="">（先測試以列出模型）</option></select></div>
+    </div>
+
+    <div data-page="google" hidden>
+      <p class="note" style="margin:0 0 10px">用於匯入名單與回寫成績。建立/使用一個 Google OAuth 用戶端（桌面應用程式類型即可），並把下面這個網址加進它的「已授權的重新導向 URI」：<br><code style="font-size:11px">http://127.0.0.1:8780/oauth/callback</code></p>
+      <div class="field"><label>Google OAuth client_id</label><input id="gClient" autocomplete="off" spellcheck="false" placeholder="…apps.googleusercontent.com"></div>
+      <div class="field"><label>Google OAuth client_secret</label><input id="gSecret" type="password" autocomplete="new-password" placeholder="••••••••"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn" id="gAuth">授權 Google</button>
+        <button class="btn" id="gLogout">清除授權</button>
+        <span class="note" id="gStat" style="margin:0"></span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center"><button class="btn" id="diagBtn">測試連線</button><span class="note" id="diagStat" style="margin:0"></span></div>
+      <div class="note" id="diagBox" style="white-space:pre-line;margin-top:6px"></div>
+    </div>
+
+    <div data-page="import" hidden>
+      <div class="tab-sub" id="impSubTabbar">
+        <button class="tab-btn on" data-subtab="manual">貼上／上傳名單</button>
+        <button class="tab-btn" data-subtab="classroom1">從 Classroom 匯入（單班）</button>
+        <button class="tab-btn" data-subtab="classroomAll">批量匯入全部班級</button>
+      </div>
+
+      <div data-subpage="manual">
+        <p class="note" style="margin:0 0 10px">填年級、班級（數字），貼上或上傳名單（每行「座號,姓名」）。</p>
+        <div style="display:flex;gap:10px">
+          <div class="field" style="flex:1"><label>年級</label><input id="riGrade" inputmode="numeric" placeholder="例：5"></div>
+          <div class="field" style="flex:1"><label>班級</label><input id="riClass" inputmode="numeric" placeholder="例：1"></div>
+        </div>
+        <div class="field"><label>名單（每行一位；貼上或上傳擇一，兩者都填會合併）</label>
+          <textarea id="riText" rows="6" placeholder="1,王小明&#10;2,李小華&#10;3,陳大同" style="width:100%;font-size:14px;padding:9px 11px;border:1px solid var(--line2);border-radius:8px;font-family:inherit;resize:vertical;outline:none"></textarea></div>
+        <div class="field"><label>或上傳檔案（.csv / .xlsx）</label><input type="file" id="riFile" accept=".csv,.xlsx"></div>
+        <div class="note" id="riCount"></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:4px"><button class="btn btn-primary" id="riGo">匯入</button></div>
+        <div class="note" id="riNote"></div>
+      </div>
+
+      <div data-subpage="classroom1" hidden>
+        <p class="note" style="margin:0 0 10px">選課程後自動讀取學生名字；若名字是「<code>510 01 王小明</code>」這種「年班 座號 姓名」格式，會自動拆出年級/班級/座號，你可以再檢查調整。</p>
+        <div class="field"><label>Classroom 課程</label><select id="crCourse"><option>載入中…</option></select></div>
+        <div id="crTableWrap" style="display:none">
+          <div class="note" id="crNote2" style="margin:0 0 8px"></div>
+          <div id="crTable" style="max-height:36vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn btn-primary" id="crGo" disabled>匯入</button></div>
+        <div class="note" id="crNote"></div>
+      </div>
+
+      <div data-subpage="classroomAll" hidden>
+        <p class="note" style="margin:0 0 10px">一次讀取你所有 Classroom 課程的名單，自動拆出年級／班級／座號。認得三種寫法：<code>506 03陳小明</code>、<code>506 03 陳小明</code>、<code>陳小明 506 13</code>（全形數字也認）。名字沒帶學號時，會再試著從課程名稱（如「<code>彈-成功自造機 406</code>」）推出年班，只留座號給你補。能解析的直接匯入；<b>其餘全部列在下方例外清單</b>，補齊或勾選略過後再一起寫入。</p>
+        <div class="note" id="cbProgress"></div>
+        <div id="cbResult" style="display:none">
+          <h3 style="margin:14px 0 6px;font-size:14px">將建立／更新的班級</h3>
+          <div id="cbSummary" style="max-height:22vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+          <h3 style="margin:16px 0 6px;font-size:14px">例外（需手動處理）<span id="cbExcCount" style="font-weight:400;color:var(--muted)"></span></h3>
+          <div id="cbExcWrap" style="max-height:28vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button class="btn" id="cbScan">重新掃描</button>
+          <button class="btn btn-primary" id="cbGo" disabled>匯入</button>
+        </div>
+        <div class="note" id="cbNote"></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--line);padding-top:14px"><button class="btn" id="aiCancel">關閉</button><button class="btn btn-primary" id="aiSave">儲存 AI／Google 設定</button></div>
     <div class="note" id="aiNote"></div>
   </div>
 </div>
@@ -333,9 +343,6 @@ function onLoggedIn(u){
   $('#gate').classList.add('off');
   $('#who').textContent='已登入 '+u.email;
   $('#logoutBtn').hidden=false;
-  $('#importRoster').disabled=false;   // 名單匯入不需先選學習單
-  $('#importClassroom').disabled=false;
-  $('#importClassroomAll').disabled=false;
   $('#newWs').disabled=false;          // 新增學習單
   $('#aiBtn').hidden=false;            // AI 評分設定
   loadCourses();loadWorksheets();
@@ -385,7 +392,7 @@ function loadWorksheets(){
   Promise.all([db.collection('worksheets').get(), db.collection('submissions').get(), pReg]).then(function(r){
     var meta={}, counts={};
     ((r[2]&&r[2].worksheets)||[]).forEach(function(w){if(!w.id)return;meta[w.id]={title:w.title||'',category:w.category||'',url:w.url||''};});
-    r[0].forEach(function(d){var c=d.data(),m=meta[d.id]||{};meta[d.id]={title:c.title||m.title||'',category:c.category||m.category||'',url:c.url||m.url||'',answerKey:c.answerKey,rubric:c.rubric};});
+    r[0].forEach(function(d){var c=d.data(),m=meta[d.id]||{};meta[d.id]={title:c.title||m.title||'',category:c.category||m.category||'',url:c.url||m.url||'',answerKey:c.answerKey,rubric:c.rubric,scoring:c.scoring};});
     r[1].forEach(function(d){var s=d.data(),id=s.worksheetId;if(!id)return;counts[id]=(counts[id]||0)+1;
       if(!meta[id])meta[id]={title:s.worksheetTitle||'',category:'',url:''};else if(!meta[id].title)meta[id].title=s.worksheetTitle||'';});
     var ids=Object.keys(meta);window._wsMeta=meta;
@@ -419,14 +426,14 @@ function fetchWsTitle(id,url,el){
   }).catch(function(){});
 }
 function selectWs(id,w){
-  curWs=id; curWsCfg={title:(w&&w.title)||id,category:(w&&w.category)||'',url:(w&&w.url)||'',answerKey:(w&&w.answerKey)||null,rubric:(w&&w.rubric)||null,questions:(w&&w.questions)||null};
+  curWs=id; curWsCfg={title:(w&&w.title)||id,category:(w&&w.category)||'',url:(w&&w.url)||'',answerKey:(w&&w.answerKey)||null,rubric:(w&&w.rubric)||null,questions:(w&&w.questions)||null,scoring:(w&&w.scoring)||null};
   $('#wsTitle').textContent=(w&&w.title)||id;
   $('#settingsPanel').hidden=true;
-  ['wsSettings','importRoster','aiGrade','exportGrades','pushClassroom'].forEach(function(x){$('#'+x).disabled=false;});
+  ['wsSettings','aiGrade','exportGrades','pushClassroom'].forEach(function(x){$('#'+x).disabled=false;});
   db.collection('worksheets').doc(id).get().then(function(d){
-    if(d.exists){var c=d.data();curWsCfg.title=c.title||curWsCfg.title;curWsCfg.category=c.category||curWsCfg.category;curWsCfg.url=c.url||curWsCfg.url;curWsCfg.answerKey=c.answerKey||curWsCfg.answerKey;curWsCfg.rubric=c.rubric||curWsCfg.rubric;curWsCfg.questions=c.questions||curWsCfg.questions;}
+    if(d.exists){var c=d.data();curWsCfg.title=c.title||curWsCfg.title;curWsCfg.category=c.category||curWsCfg.category;curWsCfg.url=c.url||curWsCfg.url;curWsCfg.answerKey=c.answerKey||curWsCfg.answerKey;curWsCfg.rubric=c.rubric||curWsCfg.rubric;curWsCfg.questions=c.questions||curWsCfg.questions;curWsCfg.scoring=c.scoring||curWsCfg.scoring;}
     $('#wsTitle').textContent=curWsCfg.title;
-    $('#wsMeta').textContent='ID：'+id+(curWsCfg.category?' · '+curWsCfg.category:'')+(curWsCfg.answerKey?' · 有標準答案':'')+(curWsCfg.rubric?' · 有評分規則':'')+((curWsCfg.answerKey||curWsCfg.rubric)?'':' · 無設定（開放題全交 AI）');
+    $('#wsMeta').textContent='ID：'+id+(curWsCfg.category?' · '+curWsCfg.category:'')+(curWsCfg.scoring?' · 自訂分數計算':' · 分數計算：預設')+(curWsCfg.rubric?' · 有評分規準':'');
   }).catch(function(){$('#wsMeta').textContent='ID：'+id;});
   loadSubs(id);
 }
@@ -484,7 +491,7 @@ function openDrawer(s){
   Object.keys(ans).forEach(function(q){html+='<div class="ans"><div class="q">'+q+'</div><div class="a">'+fmtVal(ans[q])+'</div></div>';});
   if(!html)html='<p class="note">此繳交沒有可顯示的作答欄位。</p>';
   html+='<div id="gradeBox"></div>';
-  html+='<button class="btn btn-primary" id="gradeRun" style="width:100%;margin:12px 0">用標準答案＋AI 評分</button>';
+  html+='<button class="btn btn-primary" id="gradeRun" style="width:100%;margin:12px 0">計算分數（正確率＋AI）</button>';
   html+='<div class="ans" style="border-color:#c7d2fe"><div class="q">最終分數（可手動調整，0–100）</div>'
       +'<input id="finalScore" type="number" min="0" max="100" value="'+(s.totalScore!=null?s.totalScore:'')+'" style="width:100%;font-size:16px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;outline:none"></div>';
   html+='<button class="btn" id="gradeSave" style="width:100%;margin-top:10px">儲存分數並標記已評</button>';
@@ -496,21 +503,58 @@ function openDrawer(s){
 }
 $('#drClose').onclick=function(){$('#drawer').classList.remove('on');};
 
+// ---- 分數計算（學習單設定 → 分數計算；見《學習單資料與提交規範》scoreAnswers/experienceAnswers）----
+// 預設：非開放題（score+experience 逐題 isCorrect）滿分 100，每題答錯/未完成扣 1 分；
+// 有開放題時從總分保留一部分（預設 10）給 AI，其餘才是非開放題的滿分。
+function scoringCfg(){
+  var c=curWsCfg.scoring||{};
+  return {base:c.base!=null?Number(c.base):100,deduction:c.deduction!=null?Number(c.deduction):1,
+    openWeight:c.openWeight!=null?Number(c.openWeight):10,itemPoints:c.itemPoints||{}};
+}
+function calcScore(s,cfg,aiScore){
+  cfg=cfg||scoringCfg();
+  var combine=Object.assign({},s.scoreAnswers||{},s.experienceAnswers||{});
+  var qids=Object.keys(combine);
+  var hasOpen=!!(s.openAnswers&&Object.keys(s.openAnswers).length);
+  var base=cfg.base||100,deduction=cfg.deduction||0;
+  var openWeight=hasOpen?(cfg.openWeight||0):0,basePool;
+  if(!qids.length){basePool=0;if(hasOpen)openWeight=base;}          // 全開放題：AI 拿走整個總分
+  else basePool=Math.max(0,base-openWeight);
+  var deductTotal=0,wrong=[];
+  qids.forEach(function(q){
+    if(!combine[q]||!combine[q].isCorrect){
+      var w=(cfg.itemPoints[q]!=null)?Number(cfg.itemPoints[q]):deduction;
+      deductTotal+=w;wrong.push(q);
+    }
+  });
+  var objective=qids.length?Math.max(0,basePool-deductTotal):null;
+  var openPoints=hasOpen?Math.round((Number(aiScore)||0)/100*openWeight):0;
+  var total=(qids.length||hasOpen)?Math.round((objective||0)+openPoints):null;
+  return {objective:objective,basePool:basePool,deductTotal:deductTotal,wrong:wrong,qids:qids,
+    hasOpen:hasOpen,openWeight:openWeight,openPoints:openPoints,total:total};
+}
+function renderCalcBox(calc,aiScore,aiFeedback){
+  var h='';
+  if(calc.qids.length)h+='<div class="ans"><div class="q">非開放題（計分／體驗，滿分 '+calc.basePool+'）</div><div class="a">'+calc.objective+' 分</div>'
+    +(calc.wrong.length?'<div class="q" style="margin-top:6px">答錯／未完成（共扣 '+calc.deductTotal+' 分）</div><div class="a" style="font-weight:400">'+calc.wrong.join('、')+'</div>':'<div class="q" style="margin-top:6px;color:var(--ok)">全部正確</div>')+'</div>';
+  if(calc.hasOpen)h+='<div class="ans"><div class="q">AI 評分（開放題，保留 '+calc.openWeight+' 分）</div><div class="a">AI 給分 '+(aiScore!=null?aiScore:'—')+' / 100　→ 換算 '+calc.openPoints+' 分</div>'
+    +(aiFeedback?('<div class="q" style="margin-top:6px">回饋</div><div class="a" style="font-weight:400">'+aiFeedback+'</div>'):'')+'</div>';
+  if(!calc.qids.length&&!calc.hasOpen)h+='<div class="ans"><div class="q">這份沒有可自動判斷的題目</div><div class="a" style="font-weight:400">請直接手動輸入最終分數。</div></div>';
+  return h;
+}
 function gradeOne(s,render){
-  var note=render?$('#gradeNote'):null;
-  // 新式提交（有 openAnswers）只把開放題送 AI；score/experience 的正確率/完成度已由學習單自己算好（accuracyRate/experienceCompletion）
-  var gradeInput=s.openAnswers?Object.assign({},s.openAnswers):(s.answers||{});
+  var note=render?$('#gradeNote'):null,cfg=scoringCfg();
+  var gradeInput=s.openAnswers?Object.assign({},s.openAnswers):{};
   var hasOpen=Object.keys(gradeInput).length>0;
-  // 兩個計算系統：正確率（客觀題，學習單自算）與 AI（開放題）。沒有開放題就不必叫 AI，直接用正確率。
+  // 兩個計算系統：正確率（客觀/體驗題，學習單自算 isCorrect）與 AI（開放題）。沒有開放題就不必叫 AI。
   if(!hasOpen){
-    var g0={ok:true,autoScore:s.accuracyRate!=null?s.accuracyRate:null,aiScore:null,aiFeedback:'',perItem:[]};
-    s._grade=g0; s._final=(s.accuracyRate!=null?s.accuracyRate:'');
+    var calc=calcScore(s,cfg,null);
+    var g0={ok:true,autoScore:calc.objective,aiScore:null,aiFeedback:'',perItem:[]};
+    s._grade=g0;s._calc=calc;s._final=(calc.total==null?'':calc.total);
     if(render){
-      $('#gradeBox').innerHTML=(s.accuracyRate!=null
-        ?'<div class="ans"><div class="q">正確率（無開放題，不需要 AI）</div><div class="a">'+s.accuracyRate+' 分</div></div>'
-        :'<div class="ans"><div class="q">此份沒有計分題也沒有開放題</div><div class="a" style="font-weight:400">請直接手動輸入最終分數。</div></div>');
+      $('#gradeBox').innerHTML=renderCalcBox(calc,null,'');
       $('#finalScore').value=s._final;
-      note.style.color='var(--ok)';note.textContent='此份沒有開放題，不需要呼叫 AI，已直接採用正確率。';
+      note.style.color='var(--ok)';note.textContent=calc.qids.length?'此份沒有開放題，不需要呼叫 AI，已依分數計算規則算出。':'此份沒有計分題也沒有開放題，請直接手動輸入最終分數。';
     }
     return Promise.resolve(g0);
   }
@@ -520,17 +564,13 @@ function gradeOne(s,render){
     .then(function(r){return r.json();}).then(function(g){
       if(!g.ok)throw new Error(g.error||'評分失敗');
       s._grade=g;
-      // 最終分優先用學習單自己算好的 accuracyRate（客觀題）＋ AI 的開放題分數；無 accuracyRate 時退回 /api/grade 的 autoScore（舊式相容）
-      var objective=s.accuracyRate!=null?s.accuracyRate:g.autoScore;
-      var final=(g.aiScore!=null&&objective!=null)?Math.round((objective+g.aiScore)/2):(g.aiScore!=null?g.aiScore:objective);
-      s._final=(final==null?'':final);
+      var calc=calcScore(s,cfg,g.aiScore);
+      s._calc=calc;s._final=(calc.total==null?'':calc.total);
       if(render){
-        var h='';
-        if(objective!=null)h+='<div class="ans"><div class="q">正確率（客觀題）</div><div class="a">'+objective+' 分</div></div>';
-        if(g.aiScore!=null)h+='<div class="ans"><div class="q">AI 評分（開放題）</div><div class="a">'+g.aiScore+' 分</div><div class="q" style="margin-top:6px">回饋</div><div class="a" style="font-weight:400">'+(g.aiFeedback||'')+'</div></div>';
-        else if(g.aiFeedback)h+='<div class="ans" style="border-color:#fca5a5"><div class="q">AI 評分未完成</div><div class="a" style="font-weight:400">'+g.aiFeedback+'</div></div>';
-        (g.perItem||[]).forEach(function(it){if(it.type==='objective')h+='<div class="ans" style="border-color:'+(it.correct?'#86efac':'#fca5a5')+'"><div class="q">'+it.qid+'（標準答案）'+(it.correct?' 正確':' 錯誤')+'</div><div class="a" style="font-weight:400">你的：'+fmtVal(it.got)+'　答案：'+fmtVal(it.expected)+'</div></div>';});
-        $('#gradeBox').innerHTML=h||'<p class="note">沒有可顯示的評分結果。</p>';
+        var h=renderCalcBox(calc,g.aiScore,g.aiFeedback);
+        if(g.aiScore==null&&g.aiFeedback)h+='<div class="ans" style="border-color:#fca5a5"><div class="q">AI 評分未完成</div><div class="a" style="font-weight:400">'+g.aiFeedback+'</div></div>';
+        (g.perItem||[]).forEach(function(it){if(it.type==='objective')h+='<div class="ans" style="border-color:'+(it.correct?'#86efac':'#fca5a5')+'"><div class="q">'+it.qid+'（舊式標準答案）'+(it.correct?' 正確':' 錯誤')+'</div><div class="a" style="font-weight:400">你的：'+fmtVal(it.got)+'　答案：'+fmtVal(it.expected)+'</div></div>';});
+        $('#gradeBox').innerHTML=h;
         $('#finalScore').value=s._final;
         if(note){
           if(g.aiScore==null&&g.aiFeedback){note.style.color='var(--warn)';note.textContent='AI 評分未完成（見上方訊息），請先確認 AI 設定。';}
@@ -543,8 +583,8 @@ function gradeOne(s,render){
         var missingKey=/API Key|端點 URL|尚未填/.test(e.message);
         note.style.color='var(--warn)';
         note.textContent=missingKey
-          ? '缺少 AI 設定：請到「AI 設定」填寫反向代理與金鑰後再試一次。'
-          : '評分失敗：'+e.message+'（請確認工作台已啟動）';
+          ? '缺少 AI 設定：請到「設定」填寫反向代理與金鑰後再試一次。'
+          : '評分失敗：'+e.message+'（請確認評分平台後端已啟動）';
       }
       throw e;
     });
@@ -575,7 +615,7 @@ function batchGrade(btn){
       $('#mainNote').textContent=msg;return;
     }
     var s=list[i];
-    var hasOpen=Object.keys(s.openAnswers||s.answers||{}).length>0;
+    var hasOpen=Object.keys(s.openAnswers||{}).length>0;
     $('#mainNote').textContent=(hasOpen?'AI 評分處理中…　':'採用正確率…　')+(i+1)+' / '+list.length;
     gradeOne(s,false).then(function(g){
       if(hasOpen)aiUsed++; else skippedAI++;
@@ -608,8 +648,24 @@ $('#nwGo').addEventListener('click',function(){
 });
 
 // ---- 設定：AI 評分 ＋ Google Classroom 授權（都存在評分平台自己的 config.json）----
+// ---- 設定面板：內部分頁（AI 評分 / Google Classroom / 名單匯入），名單匯入下再分三個子分頁 ----
+function showSetTab(name){
+  document.querySelectorAll('#setTabbar .tab-btn').forEach(function(b){b.classList.toggle('on',b.dataset.tab===name);});
+  document.querySelectorAll('#aiModal>.panel>[data-page]').forEach(function(p){p.hidden=(p.dataset.page!==name);});
+  if(name==='import'&&!$('#impSubTabbar').dataset.inited){$('#impSubTabbar').dataset.inited='1';showImpSubTab('manual');}
+}
+document.querySelectorAll('#setTabbar .tab-btn').forEach(function(b){b.addEventListener('click',function(){showSetTab(b.dataset.tab);});});
+function showImpSubTab(name){
+  document.querySelectorAll('#impSubTabbar .tab-btn').forEach(function(b){b.classList.toggle('on',b.dataset.subtab===name);});
+  document.querySelectorAll('[data-page="import"] [data-subpage]').forEach(function(p){p.hidden=(p.dataset.subpage!==name);});
+  if(name==='classroom1')openClassroomImport();                 // 每次切進來重抓課程清單，成本低
+  if(name==='classroomAll'&&!_cbScanned)cbScan();                // 全班批量掃描較重，只在第一次自動跑，之後靠「重新掃描」
+}
+document.querySelectorAll('#impSubTabbar .tab-btn').forEach(function(b){b.addEventListener('click',function(){showImpSubTab(b.dataset.subtab);});});
+
 $('#aiBtn').addEventListener('click',function(){
   $('#aiNote').textContent='';$('#aiTestNote').textContent='';$('#diagStat').textContent='';$('#diagBox').textContent='';
+  showSetTab('ai');
   fetch(WORKBENCH+'/api/settings').then(function(r){return r.json();}).then(function(c){
     $('#aiEndpoint').value=c.grade_endpoint||'';$('#aiKey').value=c.grade_key||'';
     var m=$('#aiModel');if(c.grade_model){m.innerHTML='<option value="'+c.grade_model+'">'+c.grade_model+'</option>';m.value=c.grade_model;}
@@ -660,8 +716,15 @@ $('#aiSave').addEventListener('click',function(){
 });
 
 // ---- P3.5 學習單設定（標準答案／評分規準）----
-function currentQids(){var set={};subsCache.forEach(function(s){Object.keys(s.answers||{}).forEach(function(q){set[q]=1;});});return Object.keys(set).sort();}
-function parseAns(v){v=(v||'').trim();if(!v)return null;return (v.indexOf('、')>=0||v.indexOf(',')>=0)?v.split(/[、,]/).map(function(x){return x.trim();}).filter(Boolean):v;}
+// 非開放題（score+experience）的題號清單，供「逐題配分覆寫」表使用；標準答案本身已不在這裡編輯（見學習單自己的 Admin）
+function nonOpenQids(){
+  var set={};
+  subsCache.forEach(function(s){
+    Object.keys(s.scoreAnswers||{}).forEach(function(q){set[q]=1;});
+    Object.keys(s.experienceAnswers||{}).forEach(function(q){set[q]=1;});
+  });
+  return Object.keys(set).sort();
+}
 function addRubricRow(c){
   c=c||{name:'',points:'',desc:''};
   var row=document.createElement('div');row.className='rubric-row';row.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center';
@@ -672,17 +735,27 @@ function addRubricRow(c){
   row.querySelector('.rk-del').onclick=function(){row.remove();};
   $('#rubricBox').appendChild(row);
 }
+function renderScoring(){
+  var sc=curWsCfg.scoring||{};
+  $('#scBase').value=sc.base!=null?sc.base:100;
+  $('#scDeduct').value=sc.deduction!=null?sc.deduction:1;
+  $('#scOpenWeight').value=sc.openWeight!=null?sc.openWeight:10;
+  var itemPoints=sc.itemPoints||{},qids=nonOpenQids(),box=$('#scItemsBox');
+  var h='<div style="font-size:12px;font-weight:600;color:var(--muted);margin:2px 0 6px">逐題配分覆寫（留空＝用上面的預設扣分；只有該題答錯／未完成時才扣這個值）</div>';
+  if(!qids.length)h+='<div class="note" style="margin:0">尚無繳交，讀不到題號。可先用上面的預設值；有人繳交後回來逐題調整。</div>';
+  else qids.forEach(function(q){var v=itemPoints[q];
+    h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span style="width:56px;font-weight:600;font-size:13px">'+q+'</span>'
+      +'<input class="sc-item" data-q="'+q+'" inputmode="numeric" value="'+(v!=null?v:'')+'" placeholder="預設 '+($('#scDeduct').value||1)+'" style="width:110px;padding:6px 9px;border:1px solid var(--line2);border-radius:7px"></div>';});
+  box.innerHTML=h;
+}
 function renderSettings(){
   $('#setTitle').value=curWsCfg.title||curWs||'';
   $('#setCat').value=curWsCfg.category||'';
-  var ak=curWsCfg.answerKey||{},qids=currentQids(),box=$('#answerKeyBox');
-  var h=curWsCfg.url?('<a href="'+curWsCfg.url+'#admin" target="_blank" class="btn" style="text-decoration:none;display:inline-block;margin-bottom:10px">開啟學習單 Admin（在學習單裡設定／查看答案）</a><div style="font-size:11px;color:var(--muted);margin-bottom:10px">有些答案不是純文字（拖曳、圖形…），用上面的 Admin（網址加 #admin）在學習單本身設定；純文字答案也可在下方逐題填。</div>'):'';
-  h+='<div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">標準答案（逐題；多選用「、」分隔；留空＝開放題）</div>';
-  if(!qids.length)h+='<div class="note">尚無繳交，讀不到題號。可先讓一位學生試繳，或只用下方規準做開放題評分。</div>';
-  else qids.forEach(function(q){var v=ak[q];v=Array.isArray(v)?v.join('、'):(v||'');
-    h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span style="width:56px;font-weight:600;font-size:13px">'+q+'</span>'
-      +'<input class="ak-in" data-q="'+q+'" value="'+String(v).replace(/"/g,'&quot;')+'" placeholder="標準答案（留空＝開放題）" style="flex:1;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>';});
-  box.innerHTML=h;
+  $('#wsAdminBox').innerHTML=curWsCfg.url
+    ?('<a href="'+curWsCfg.url+'#admin" target="_blank" class="btn" style="text-decoration:none;display:inline-block;margin-bottom:6px">開啟學習單 Admin（設定／查看標準答案）</a>'
+      +'<div style="font-size:11px;color:var(--muted)">標準答案在學習單自己的 Admin 設定（網址加 #admin），這裡不重複填；下面只管分數怎麼算與開放題的 AI 評分規準。</div>')
+    :'<div class="note" style="margin:0">這份學習單還沒有登記網址，補上網址後才能開啟 Admin 設定標準答案。</div>';
+  renderScoring();
   $('#rubricBox').innerHTML='';
   var crit=(curWsCfg.rubric&&curWsCfg.rubric.criteria)||[];
   if(!crit.length)addRubricRow();else crit.forEach(addRubricRow);
@@ -690,18 +763,20 @@ function renderSettings(){
 }
 $('#wsSettings').addEventListener('click',function(){var p=$('#settingsPanel');if(p.hidden){renderSettings();p.hidden=false;}else p.hidden=true;});
 $('#addCriterion').addEventListener('click',function(){addRubricRow();});
+$('#scDeduct').addEventListener('input',function(){document.querySelectorAll('#scItemsBox .sc-item').forEach(function(i){i.placeholder='預設 '+($('#scDeduct').value||1);});});
 $('#settingsSave').addEventListener('click',function(){
   if(!curWs)return;
-  var answerKey={};document.querySelectorAll('#answerKeyBox .ak-in').forEach(function(i){var a=parseAns(i.value);if(a!=null)answerKey[i.dataset.q]=a;});
   var criteria=[];document.querySelectorAll('#rubricBox .rubric-row').forEach(function(r){var n=r.querySelector('.rk-name').value.trim();if(!n)return;
     criteria.push({name:n,points:Number(r.querySelector('.rk-pts').value)||0,desc:r.querySelector('.rk-desc').value.trim()});});
+  var scoring={base:Number($('#scBase').value)||100,deduction:Number($('#scDeduct').value)||0,openWeight:Number($('#scOpenWeight').value)||0,itemPoints:{}};
+  document.querySelectorAll('#scItemsBox .sc-item').forEach(function(i){var v=i.value.trim();if(v!=='')scoring.itemPoints[i.dataset.q]=Number(v)||0;});
   var title=$('#setTitle').value.trim()||curWs,category=$('#setCat').value;
   var note=$('#settingsNote');note.style.color='var(--muted)';note.textContent='儲存中…';
-  db.collection('worksheets').doc(curWs).set({title:title,category:category,answerKey:answerKey,rubric:{criteria:criteria}},{merge:true}).then(function(){
-    curWsCfg.title=title;curWsCfg.category=category;curWsCfg.answerKey=Object.keys(answerKey).length?answerKey:null;curWsCfg.rubric=criteria.length?{criteria:criteria}:null;
+  db.collection('worksheets').doc(curWs).set({title:title,category:category,scoring:scoring,rubric:{criteria:criteria}},{merge:true}).then(function(){
+    curWsCfg.title=title;curWsCfg.category=category;curWsCfg.scoring=scoring;curWsCfg.rubric=criteria.length?{criteria:criteria}:null;
     note.style.color='var(--ok)';note.textContent='已儲存。評分時會套用這些設定。';
     $('#wsTitle').textContent=title;
-    $('#wsMeta').textContent='ID：'+curWs+(category?' · '+category:'')+(curWsCfg.answerKey?' · 有標準答案':'')+(curWsCfg.rubric?' · 有評分規則':'');
+    $('#wsMeta').textContent='ID：'+curWs+(category?' · '+category:'')+' · 自訂分數計算'+(curWsCfg.rubric?' · 有評分規準':'');
     loadWorksheets();  // 反映標題/分類變更到左欄
   }).catch(function(e){note.style.color='var(--warn)';note.textContent='儲存失敗：'+friendlyErr(e);});
 });
@@ -771,8 +846,6 @@ function readFileRows(file){
   });
 }
 var _riFileRows=[];
-$('#importRoster').addEventListener('click',function(){$('#riNote').textContent='';$('#riCount').textContent='';$('#riFile').value='';_riFileRows=[];$('#riModal').classList.remove('off');});
-$('#riCancel').addEventListener('click',function(){$('#riModal').classList.add('off');});
 function updateRiCount(){var n=parseRoster($('#riText').value).length+_riFileRows.length;$('#riCount').textContent=n?('將匯入 '+n+' 位'):'';}
 $('#riText').addEventListener('input',updateRiCount);
 $('#riFile').addEventListener('change',function(){
@@ -791,8 +864,7 @@ $('#riGo').addEventListener('click',function(){
   batch.set(db.collection('courses').doc(cid),{grade:Number(grade),className:Number(cls),name:courseName(grade,cls),source:'manual'},{merge:true});
   list.forEach(function(st){batch.set(db.collection('courses').doc(cid).collection('students').doc(String(st.seatNo)),{seatNo:st.seatNo,name:st.name},{merge:true});});
   note.style.color='var(--muted)';note.textContent='匯入中…';
-  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+list.length+' 位到「'+courseName(grade,cls)+'」。';loadCourses();
-    setTimeout(function(){$('#riModal').classList.add('off');},1000);})
+  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+list.length+' 位到「'+courseName(grade,cls)+'」。';loadCourses();})
     .catch(function(e){note.style.color='var(--warn)';note.textContent='匯入失敗：'+friendlyErr(e);});
 });
 function digitsOnly(v){return String(v||'').replace(/[^0-9]/g,'');}
@@ -825,15 +897,14 @@ function classFromCourseName(courseTitle){
   while((m=re.exec(s)))last=m;
   return last?{grade:+last[1],className:+last[2]}:null;
 }
-$('#importClassroom').addEventListener('click',function(){
+function openClassroomImport(){
   $('#crNote').textContent='';$('#crTableWrap').style.display='none';$('#crGo').disabled=true;CR={students:[],rows:[]};
-  $('#crCourse').innerHTML='<option>載入課程中…</option>';$('#crModal').classList.remove('off');
+  $('#crCourse').innerHTML='<option>載入課程中…</option>';
   fetch(WORKBENCH+'/api/google/courses').then(function(r){return r.json();}).then(function(r){
-    if(!r.ok){$('#crCourse').innerHTML='<option value="">'+(r.error||'讀取失敗（需啟動工作台並授權 Google）')+'</option>';return;}
+    if(!r.ok){$('#crCourse').innerHTML='<option value="">'+(r.error||'讀取失敗（需先在「Google Classroom」分頁完成授權）')+'</option>';return;}
     $('#crCourse').innerHTML='<option value="">選課程…</option>'+r.courses.map(function(c){return '<option value="'+c.id+'">'+c.name+(c.section?(' · '+c.section):'')+'</option>';}).join('');
-  }).catch(function(e){$('#crCourse').innerHTML='<option value="">工作台未啟動？'+e.message+'</option>';});
-});
-$('#crCancel').addEventListener('click',function(){$('#crModal').classList.add('off');});
+  }).catch(function(e){$('#crCourse').innerHTML='<option value="">後端未啟動？'+e.message+'</option>';});
+}
 $('#crCourse').addEventListener('change',function(){
   var cid=this.value;$('#crTableWrap').style.display='none';$('#crGo').disabled=true;
   if(!cid)return;
@@ -876,8 +947,7 @@ $('#crGo').addEventListener('click',function(){
       {seatNo:r.seatNo,name:r.name,classroomUserId:r.userId},{merge:true});});
   });
   note.style.color='var(--muted)';note.textContent='匯入中…';
-  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+CR.rows.length+' 位（含 Classroom 帳號，回寫成績可自動比對）。';loadCourses();
-    setTimeout(function(){$('#crModal').classList.add('off');},1200);})
+  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+CR.rows.length+' 位（含 Classroom 帳號，回寫成績可自動比對）。';loadCourses();})
     .catch(function(e){note.style.color='var(--warn)';note.textContent='匯入失敗：'+friendlyErr(e);});
 });
 
@@ -896,13 +966,11 @@ function commitChunked(ops,onProgress){
     });
   },Promise.resolve());
 }
-$('#importClassroomAll').addEventListener('click',function(){
-  $('#cbNote').textContent='';$('#cbModal').classList.remove('off');cbScan();
-});
-$('#cbCancel').addEventListener('click',function(){$('#cbModal').classList.add('off');});
+var _cbScanned=false;
 $('#cbScan').addEventListener('click',cbScan);
 function cbScan(){
   if(CB.scanning)return;
+  _cbScanned=true;
   CB={rows:[],failed:[],scanning:true};
   $('#cbResult').style.display='none';$('#cbGo').disabled=true;$('#cbNote').textContent='';
   $('#cbProgress').style.color='var(--muted)';$('#cbProgress').textContent='讀取課程清單…';

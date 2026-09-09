@@ -29,7 +29,7 @@
 
 ```
 submissions/{wsId}__{grade}-{className}-{studentId}   學生繳交（見學習單資料規範 §3 完整欄位）
-worksheets/{wsId}                        學習單設定（老師管理） { title, category, url, answerKey?, rubric?, questions? }
+worksheets/{wsId}                        學習單設定（老師管理） { title, category, url, scoring?, rubric?, questions?, answerKey?（舊式，見 §7 分數計算） }
 courses/{grade}-c{className}             班級名單（老師管理） { grade, className, name:"{grade}年{className}班", source:'manual'|'classroom',
                                             students/{seatNo}:{seatNo, name, classroomUserId?} }  // classroomUserId 有值時，Classroom 回寫可精準比對，不必猜姓名
 feeds/{wsId}/messages/{autoId}           開放題即時同儕動態（見學習單資料規範 §4） { qid, text, tag, at }
@@ -37,7 +37,7 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 ```
 - **為何扁平**：Firestore 的 collection 查詢**不會回傳「只有子集合、本身不存在」的幽靈父文件**；若把繳交放 `worksheets/{ws}/submissions`，教師端就列不出還沒被老師建過設定的學習單。改用扁平 `submissions`＋`worksheetId` 欄位，教師端由繳交資料直接推出學習單清單。
 - **doc id**＝`{worksheetId}__{grade}-{className}-{studentId}`：同一人重繳覆蓋自己那筆。三個識別欄皆為數字，不採「班級＋座號＋姓名」——見資料規範 §1 的理由。
-- **評分兩路（兩個獨立計算系統，不是一步流程）**：`score` 題由頁面自己算出 `accuracyRate`（客觀正解）；`open` 題送 AI 得 `aiScore`＋`aiFeedback`（`totalScore` 為教師確認後的最終分，走 `/api/grade`）。`experience` 題只計入 `experienceCompletion`，不進正確率。**沒有開放題時教師端完全不呼叫 AI**，直接拿 `accuracyRate` 當最終分。
+- **評分兩路（兩個獨立計算系統，不是一步流程）**：`score`／`experience` 題由頁面自己逐題算出 `isCorrect`（客觀正解，見資料規範 §3 `scoreAnswers`/`experienceAnswers`）；`open` 題送 AI 得 `aiScore`＋`aiFeedback`（走 `/api/grade`）。**沒有開放題時教師端完全不呼叫 AI**。兩路的分數怎麼合成 `totalScore`，由教師在「學習單設定」的**分數計算**設定決定，見 §7-d。
 - **規則**：見同層 `firestore.rules`（含 L01 quizzes、submissions、worksheets、courses、feeds）。
 
 ## 3. Firestore 安全規則
@@ -90,10 +90,26 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
   - **命名解析（依真實名單統計定案）**：先全形轉半形，再依序試 A「`506 03陳小明`／`506 03 陳小明`」（年班 座號 姓名，座號與姓名間空白可有可無——**校內最常見**）、B「`陳小明 506 13`」（姓名在前）、C「`年605 20 陳小明`」（去掉非數字前綴後套 A）。三者皆不中且**課程名稱末尾帶三碼班級**（如「彈-成功自造機 406」）時，從課程推出年級/班級預填進例外列，只留座號給教師補。
   - **例外的三種來源**：①姓名與課程名稱都推不出年班座號；②**同班座號撞號且姓名不同**（同座號同名＝同一人出現在多門課，靜靜合併不算例外）；③整個課程讀取失敗或沒有學生（以課程為單位列在掃描結果那行，不進表格）。
   - **分段寫入**：Firestore 單一 batch 上限 500 筆，全校名單必然超過，故 `commitChunked()` 以 450 筆為一段依序送出並回報進度。這是「批次寫入應分批而非一次全做」原則（見 §9）的實作。
+- **設定面板（教師指定改版）**：頁首「設定」按鈕（原「AI 設定」）打開單一 modal，內部用**分頁**分三塊——「AI 評分」「Google Classroom」「名單匯入」；「名單匯入」下再分三個子分頁（貼上／上傳、Classroom 單班、批量匯入全部班級），即上面三／四個管道**都收進這裡**，工具列不再各放一顆按鈕。子分頁切換時才懶載入（切到「Classroom 單班」重抓課程清單；切到「批量匯入」只有第一次自動掃描，之後靠「重新掃描」，避免每次切分頁都打一輪 22 門課的 API）。
+- **學習單設定面板改版**：原本逐題手填「標準答案」的表格已移除——**標準答案統一在學習單自己的 `#admin` 設定**，這裡只留一顆「開啟學習單 Admin」連結；面板改放**分數計算**（見 §7-d）與**評分規準**（AI 開放題用，不變）。
+
+### 7-d. 分數計算（學習單設定，教師指定）
+> 動機：教師要能自訂「答錯扣多少」「開放題佔多少比重」「個別題目能不能配不同分數」，不是寫死的公式。
+
+- **資料**：`worksheets/{ws}.scoring = { base, deduction, openWeight, itemPoints }`——`base` 總分（預設 100）、`deduction` 每題預設扣分（預設 1）、`openWeight` 開放題（AI）保留分數（預設 10，**只在這份學習單有開放題時才生效**）、`itemPoints` 逐題扣分覆寫（`{qid: 分數}`，留空的題目用 `deduction`）。未設定過就等同全預設值。
+- **算法**（`teacher.html` 的 `calcScore(sub, cfg, aiScore)`）：
+  1. 把 `scoreAnswers` 與 `experienceAnswers` 併成一份逐題 `isCorrect` 清單（`open` 題不在裡面）。
+  2. `basePool = base − (有開放題 ? openWeight : 0)`——沒有開放題時非開放題滿分就是 `base`；有開放題時讓出 `openWeight` 給 AI。
+  3. 每題 `isCorrect===false` 扣 `itemPoints[qid] ?? deduction`，`objective = max(0, basePool − 扣分總和)`。
+  4. 有開放題時 `openPoints = round(aiScore/100 × openWeight)`；`total = round(objective + openPoints)`。
+  5. **邊界**：完全沒有非開放題（`scoreAnswers`/`experienceAnswers` 皆空）時，開放題吃下整個 `base`；如果連開放題都沒有（這份什麼可判斷的題目都沒有），`total = null`，教師必須手動輸入。
+- **範例**（呼應教師原話）：8 題體驗全對、無開放題 → 100 分；答錯 1 題 → 99 分；同一份若加一題開放題（AI 給 80）→ 非開放題滿分降為 90、答錯 2 題扣 2 分 → 88 分，AI 部分 80%×10=8 分，合計 96 分。
+- **UI**：`renderScoring()` 顯示總分／預設扣分／開放題保留分數三個輸入框，下面列出這份學習單目前出現過的**非開放題題號**（掃 `subsCache` 的 `scoreAnswers`/`experienceAnswers` 鍵，`nonOpenQids()`），逐題可覆寫扣分（留空＝用預設）。批改抽屜按「計算分數」時用 `renderCalcBox()` 顯示分解（非開放題幾分、扣了哪幾題、AI 開放題幾分＋回饋），最終分仍可手動覆寫再存。
+- **相容**：`/api/grade` 的 `answerKey` 參數與逐題 `perItem` 顯示保留給舊資料（早期用手填標準答案存過 `worksheets.answerKey` 的學習單），新學習單一律不再寫這個欄位。
 
 ## 8. 已決策（原「待確認」，教師已定案）
 - **繳交對應學生**：年級／班級／學號（三個數字），不用姓名、不需登入。見學習單資料規範 §1。
-- **評分粒度**：`score` 題自動核對算 `accuracyRate`；`experience` 題只算 `experienceCompletion`（不進正確率）；`open` 題送 AI／教師給 `totalScore`。三軌並存，非二選一。
+- **評分粒度**：`score`／`experience` 題逐題核對 `isCorrect`（用於扣分，不是各自獨立算一個百分比）；`open` 題送 AI。`totalScore` 由 §7-d 的分數計算規則合成，教師存最終分前仍可手動調整。
 - **Classroom 回寫**：選課程即可，**作業不必先在 Classroom 開好**——系統以目前學習單的標題（`curWsCfg.title`）正規化比對該課程的既有作業：
   - **找到同名** → 自動選取那一份，滿分欄帶入該作業的 maxPoints，成績寫進去。
   - **找不到** → 作業下拉預選「建立新作業：{學習單標題}」，按下「回寫成績」時才真的建立（`workType:ASSIGNMENT`、`state:PUBLISHED`、`maxPoints` 可在 UI 改、`materials` 附上學習單網址），建完立刻寫成績。

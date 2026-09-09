@@ -38,6 +38,12 @@
   - 全部改動**已在瀏覽器實測**（Classroom 姓名解析 regex 對兩種真實格式都正確、`parseRoster` 正確跳過標題列、`matchCourse`/`currentSubs` 過濾邏輯正確、`gradeOne` 無開放題時不打網路請求且正確採用 accuracyRate、教師端所有新增 DOM 元素齊全、無 console error）。L01 已推送 GitHub（`73f07b6..7571f18`）。評分平台本機 commit 待遠端指定。
 
 ## 本輪做了什麼（最新在上）
+- **2026-09-09 · 分數計算＋設定面板整合（教師指定）**：兩件事都在 `teacher.html`。
+  - **分數計算**：學習單設定原本逐題手填「標準答案」的表格**整段刪掉**——標準答案統一在學習單自己的 `#admin`（面板只留一顆連結）。取而代之是可調的分數公式：`worksheets/{ws}.scoring={base,deduction,openWeight,itemPoints}`，預設總分 100、每題答錯扣 1 分、有開放題時保留 10 分給 AI（其餘才是非開放題滿分）；`itemPoints` 可逐題覆寫扣分。新函式 `calcScore(sub,cfg,aiScore)` 把 `scoreAnswers`+`experienceAnswers` 併成一份 `isCorrect` 清單去算扣分，`gradeOne()`／`batchGrade()` 全面改用它（原本是簡單的「正確率與 AI 分數平均」，教師沒有調整空間）。批改抽屜的 `renderCalcBox()` 顯示分解：非開放題幾分＋扣了哪幾題、AI 開放題幾分＋回饋。
+    - **驗證（純函式，直接在瀏覽器 console 呼叫，不需登入）**：對照教師原話造測資——8 題體驗全對、無開放題 → 100；錯 1 題 → 99；同一份加開放題（AI 給 80）→ 90 分非開放題池、錯 2 題扣 2 分 → 88，AI 88 部分 8 分 → 合計 96。三個都算對。另測四個邊界：逐題覆寫（v3 扣 5 分 → 100−5=95 正確）、全開放題（AI 拿走整個 100 分）、完全無題目（`total=null`，交給老師手動輸入）、扣分超過總分應 clamp 在 0（8 題全錯×20分扣分 → 0 分不是負的）。全部符合預期。
+  - **設定面板整合**：頁首「AI 設定」按鈕改名「設定」；`aiModal` 內加分頁（AI 評分／Google Classroom／名單匯入），「名單匯入」下再分三個子分頁（貼上／上傳、Classroom 單班、批量匯入全部班級）——原本工具列三顆獨立按鈕（`importRoster`/`importClassroom`/`importClassroomAll`）連同各自的 `.gate` modal 全部拆掉，內容原封不動搬進分頁，只拿掉各自多餘的「取消」按鈕（用 modal 共用的「關閉」即可）。子分頁懶載入：切到「Classroom 單班」才重抓課程清單，切到「批量匯入」只有第一次自動掃描（`_cbScanned` 旗標），之後靠「重新掃描」按鈕，避免每次切分頁都對 22 門課打一輪 API。
+    - **驗證**：`showSetTab`/`showImpSubTab` 直接呼叫測過分頁顯示/隱藏狀態正確；`showImpSubTab('classroomAll')` 觸發真實掃描（讀到 219 位/12 班，與批量匯入功能上一輪的結果一致，證明搬遷後邏輯沒壞）；`openClassroomImport()` 觸發後 22 門課正確載入下拉。冷啟動整頁重新整理無 console error。
+    - **意外發現並修正（非本輪引入）**：測試過程發現 `config.json` 的 `grade_endpoint` 又被瀏覽器自動填成教師 email（`autocomplete="off"` 沒能完全擋住），是上一輪修過的同一個 bug 復發——已用 `/api/settings` 改回正確值 `https://gcli.ggchan.dev/v1`；改完後 `/api/grade-models` 回 401 invalid API key，這是金鑰本身的問題（不是端點問題），需要教師自行確認金鑰是否過期/更換，本輪未處理。
 - **2026-09-09 · 回寫 Classroom 免先建作業（教師指定）**：原本流程卡在「作業下拉只列現有作業，此課程沒有作業就走不下去」，教師必須先去 Classroom 手動開一份。改成**以學習單標題自動對應／自動建立**：
   - 後端新增 `classroom_create_coursework()`＋`POST /api/classroom/coursework`：先 `classroom_find_coursework()` 用正規化標題（去空白、忽略大小寫）找同名作業，**找到就沿用**、找不到才建（`workType:ASSIGNMENT`、`state:PUBLISHED`、`maxPoints` 由 UI 給、`materials` 附學習單網址）。建前再找一次是刻意的——前端清單過期或連按兩次都不會重複建立。
   - `classroom_grades()` 加重讀：剛建立的作業，Classroom 生成每位學生的 studentSubmission 有短暫延遲，讀到空的就等 2 秒重讀一次，否則會整批回報「找不到該生的繳交」。
