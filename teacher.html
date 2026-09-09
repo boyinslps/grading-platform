@@ -200,7 +200,7 @@
 <div class="gate off" id="cbModal">
   <div class="panel" style="width:min(900px,100%);max-height:90vh;overflow:auto">
     <h2>批量匯入全部班級</h2>
-    <p>一次讀取你所有 Classroom 課程的名單，依「<code>510 01 王小明</code>」＝「年班 座號 姓名」自動拆出年級／班級／座號。能正確解析的直接匯入；<b>解析不到或有衝突的會列在下方例外清單</b>，補齊或勾選略過後再一起寫入。</p>
+    <p>一次讀取你所有 Classroom 課程的名單，自動拆出年級／班級／座號。認得三種寫法：<code>506 03陳小明</code>、<code>506 03 陳小明</code>、<code>陳小明 506 13</code>（全形數字也認）。名字沒帶學號時，會再試著從課程名稱（如「<code>彈-成功自造機 406</code>」）推出年班，只留座號給你補。能解析的直接匯入；<b>其餘全部列在下方例外清單</b>，補齊或勾選略過後再一起寫入。</p>
     <div class="note" id="cbProgress"></div>
     <div id="cbResult" style="display:none">
       <h3 style="margin:14px 0 6px;font-size:14px">將建立／更新的班級</h3>
@@ -797,10 +797,31 @@ function digitsOnly(v){return String(v||'').replace(/[^0-9]/g,'');}
 
 // ---- 從 Google Classroom 匯入名單（自動拆「年班 座號 姓名」格式，如「510 01 王小明」）----
 var CR={students:[],rows:[]};
+// 全形數字/空白轉半形，否則從 Classroom 抓回來的全形命名會整批解析失敗
+function halfWidth(s){
+  return String(s==null?'':s)
+    .replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);})
+    .replace(/　/g,' ').trim();
+}
+// 實際校內命名有三種寫法（依真實 Classroom 名單統計，A 佔絕大多數）：
+//   A「506 03陳小明」「506 03 陳小明」——年班 座號 姓名，座號與姓名間空白可有可無
+//   B「陳小明 506 13」——姓名在前
+//   C「年605 20 陳小明」——前面黏了雜字，去掉非數字前綴後就是 A
+var _CN_A=/^(\d)(\d{2})\s+(\d{1,2})\s*(\D.*)$/, _CN_B=/^(\D.*?)\s+(\d)(\d{2})\s+(\d{1,2})$/;
 function parseClassroomName(full){
-  var m=String(full||'').trim().match(/^(\d)(\d{2})\s+(\d{1,2})\s+(.+)$/);
-  if(!m)return null;
-  return {grade:Number(m[1]),className:Number(m[2]),seatNo:Number(m[3]),name:m[4].trim()};
+  var s=halfWidth(full),m=s.match(_CN_A);
+  if(m)return {grade:+m[1],className:+m[2],seatNo:+m[3],name:m[4].trim()};
+  m=s.match(_CN_B);
+  if(m)return {grade:+m[2],className:+m[3],seatNo:+m[4],name:m[1].trim()};
+  var t=s.replace(/^\D+/,'');
+  if(t!==s&&(m=t.match(_CN_A)))return {grade:+m[1],className:+m[2],seatNo:+m[3],name:m[4].trim()};
+  return null;
+}
+// 姓名裡沒有年班時，退而從課程名稱推（如「彈-成功自造機 406」→ 4年6班），只填年級/班級，座號仍請老師補
+function classFromCourseName(courseTitle){
+  var s=halfWidth(courseTitle),m=null,last=null,re=/(?:^|\D)(\d)(\d{2})(?:\D|$)/g;
+  while((m=re.exec(s)))last=m;
+  return last?{grade:+last[1],className:+last[2]}:null;
 }
 $('#importClassroom').addEventListener('click',function(){
   $('#crNote').textContent='';$('#crTableWrap').style.display='none';$('#crGo').disabled=true;CR={students:[],rows:[]};
@@ -894,15 +915,25 @@ function cbScan(){
           .then(function(sr){
             if(!sr.ok||!sr.students){CB.failed.push({course:c.name,reason:sr.error||'讀不到名單'});return;}
             if(!sr.students.length){CB.failed.push({course:c.name,reason:'課程內沒有學生'});return;}
+            var fromCourse=classFromCourseName(c.name);
             sr.students.forEach(function(st){
               var p2=parseClassroomName(st.name),row={
                 course:c.name,courseKey:c.id,userId:st.userId,raw:st.name,
-                grade:p2?p2.grade:'',className:p2?p2.className:'',seatNo:p2?p2.seatNo:'',name:p2?p2.name:st.name,
-                ok:!!p2,reason:p2?'':'名字不是「年班 座號 姓名」格式',skip:false};
-              if(row.ok){
+                grade:p2?p2.grade:'',className:p2?p2.className:'',seatNo:p2?p2.seatNo:'',name:p2?p2.name:halfWidth(st.name),
+                ok:!!p2,reason:'',skip:false};
+              if(!p2){
+                if(fromCourse){ // 課程名稱帶班級（如「彈-成功自造機 406」）→ 先幫老師填好年班，只剩座號要補
+                  row.grade=fromCourse.grade;row.className=fromCourse.className;
+                  row.reason='名字沒有年班座號，已依課程名稱推測為'+courseName(fromCourse.grade,fromCourse.className)+'，請補座號';
+                }else row.reason='名字不是「年班 座號 姓名」格式，也無法從課程名稱推測班級';
+              }else{
                 var key=courseId(row.grade,row.className)+'#'+row.seatNo;
-                if(seen[key]){row.ok=false;row.reason='座號重複（'+courseName(row.grade,row.className)+' '+row.seatNo+'號 已被「'+seen[key]+'」佔用）';}
-                else seen[key]=row.name;
+                // 同一個人出現在多門課（電腦課＋社團）不算衝突，靜靜合併；只有同座號不同名才需要老師處理
+                if(seen[key]!=null){
+                  if(String(seen[key]).replace(/\s/g,'')===String(row.name).replace(/\s/g,''))return;
+                  row.ok=false;
+                  row.reason='座號重複但名字不同（'+courseName(row.grade,row.className)+' '+row.seatNo+'號 已被「'+seen[key]+'」佔用）';
+                }else seen[key]=row.name;
               }
               CB.rows.push(row);
             });
