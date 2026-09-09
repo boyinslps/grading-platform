@@ -265,11 +265,13 @@
 <div class="gate off" id="ccModal">
   <div class="panel" style="width:min(700px,100%);max-height:88vh;overflow:auto">
     <h2>回寫成績到 Google Classroom</h2>
-    <p>選課程與作業，系統以姓名自動對應學生；對不到的用下拉手動指定，再送出。</p>
+    <p>選課程後，系統會以學習單名稱去找同名作業；<b>找不到就直接建立一份新作業再寫入成績</b>，不必先去 Classroom 開好。學生以 Classroom 帳號（或姓名）自動對應，對不到的用下拉手動指定。</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <div class="field" style="flex:1;min-width:200px"><label>Classroom 課程</label><select id="ccCourse"><option>載入中…</option></select></div>
       <div class="field" style="flex:1;min-width:200px"><label>作業</label><select id="ccWork"><option value="">先選課程</option></select></div>
+      <div class="field" style="width:96px"><label>滿分</label><input id="ccMax" inputmode="numeric" value="100"></div>
     </div>
+    <div class="note" id="ccWorkNote" style="margin-top:-4px"></div>
     <div id="ccMapWrap" style="display:none">
       <div class="note" id="ccMapNote"></div>
       <div id="ccMap" style="max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
@@ -1068,16 +1070,37 @@ $('#ccCancel').addEventListener('click',function(){$('#ccModal').classList.add('
 $('#ccCourse').addEventListener('change',function(){
   var cid=this.value;$('#ccWork').innerHTML='<option value="">載入作業中…</option>';$('#ccMapWrap').style.display='none';$('#ccGo').disabled=true;CC.students=[];
   if(!cid){$('#ccWork').innerHTML='<option value="">先選課程</option>';return;}
-  ccGet('/api/classroom/coursework?courseId='+encodeURIComponent(cid)).then(function(r){
-    if(!r.ok){$('#ccWork').innerHTML='<option value="">'+(r.error||'讀取失敗')+'</option>';return;}
-    if(!r.courseWork.length){$('#ccWork').innerHTML='<option value="">此課程沒有作業</option>';return;}
-    $('#ccWork').innerHTML='<option value="">選作業…</option>'+r.courseWork.map(function(w){return '<option value="'+w.id+'">'+w.title+(w.maxPoints!=null?(' （滿分 '+w.maxPoints+'）'):'')+'</option>';}).join('');
-  });
-  ccGet('/api/classroom/students?courseId='+encodeURIComponent(cid)).then(function(r){
+  // 名單與作業一起等：buildCCMap 需要 CC.students 才能自動對應，先跑會全部對不到
+  var studP=ccGet('/api/classroom/students?courseId='+encodeURIComponent(cid)).then(function(r){
     CC.students=(r.ok&&r.students)?r.students:[];CC._studErr=r.ok?'':(r.error||'讀名單失敗');
+  }).catch(function(e){CC.students=[];CC._studErr=e.message;});
+  Promise.all([ccGet('/api/classroom/coursework?courseId='+encodeURIComponent(cid)),studP]).then(function(res){
+    var r=res[0];
+    if(!r.ok){$('#ccWork').innerHTML='<option value="">'+(r.error||'讀取失敗')+'</option>';return;}
+    var wsName=(curWsCfg.title||curWs||'').trim();
+    // 依學習單名稱找同名作業（忽略空白/大小寫）；找不到就準備建立一份同名的
+    var want=normName(wsName).toLowerCase(),hit=null;
+    (r.courseWork||[]).forEach(function(w){if(!hit&&normName(w.title).toLowerCase()===want)hit=w;});
+    var opts=(r.courseWork||[]).map(function(w){return '<option value="'+w.id+'">'+w.title+(w.maxPoints!=null?(' （滿分 '+w.maxPoints+'）'):'')+'</option>';});
+    opts.unshift('<option value="__create__">建立新作業：'+wsName+'</option>');
+    $('#ccWork').innerHTML=opts.join('');
+    $('#ccWork').value=hit?hit.id:'__create__';
+    if(hit){
+      $('#ccWorkNote').style.color='var(--ok)';
+      $('#ccWorkNote').textContent='已對到同名作業「'+hit.title+'」，成績會寫進這一份。';
+      if(hit.maxPoints!=null)$('#ccMax').value=hit.maxPoints;
+    }else{
+      $('#ccWorkNote').style.color='var(--muted)';
+      $('#ccWorkNote').textContent='此課程沒有名為「'+wsName+'」的作業，送出時會依這個名稱建立一份新作業（附上學習單連結）再寫入成績。也可以從上面改選現有作業。';
+    }
+    buildCCMap();   // 程式設定 value 不會觸發 change，這裡自己接上
   });
 });
-$('#ccWork').addEventListener('change',function(){ if(this.value&&$('#ccCourse').value) buildCCMap(); });
+$('#ccWork').addEventListener('change',function(){
+  if(this.value!=='__create__'){$('#ccWorkNote').style.color='var(--muted)';$('#ccWorkNote').textContent='成績會寫進「'+this.options[this.selectedIndex].text+'」。';}
+  else{$('#ccWorkNote').style.color='var(--muted)';$('#ccWorkNote').textContent='送出時會依學習單名稱建立一份新作業（附上學習單連結）再寫入成績。';}
+  if(this.value&&$('#ccCourse').value) buildCCMap();
+});
 function buildCCMap(){
   var graded=currentSubs().filter(function(s){return s.totalScore!=null;});
   // 若這個班級的名單是從 Classroom 匯入（存了 classroomUserId），可直接精準比對，不必靠姓名猜
@@ -1106,16 +1129,33 @@ function buildCCMap(){
     $('#ccMapWrap').style.display='';$('#ccGo').disabled=false;
   });
 }
+function ccPost(p,body){return fetch(WORKBENCH+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();});}
 $('#ccGo').addEventListener('click',function(){
-  var courseId=$('#ccCourse').value,courseWorkId=$('#ccWork').value,note=$('#ccNote'),self=this;
+  var courseId=$('#ccCourse').value,pick=$('#ccWork').value,note=$('#ccNote'),self=this;
   var grades=[];Array.prototype.forEach.call($('#ccMap').querySelectorAll('.cc-sel'),function(x){if(x.value)grades.push({userId:x.value,grade:Number(x.dataset.score)});});
   if(!grades.length){note.style.color='var(--warn)';note.textContent='沒有要回寫的對應。';return;}
-  note.style.color='var(--muted)';note.textContent='回寫中…（'+grades.length+' 筆）';self.disabled=true;
-  fetch(WORKBENCH+'/api/classroom/grades',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({courseId:courseId,courseWorkId:courseWorkId,grades:grades})})
-    .then(function(r){return r.json();}).then(function(r){self.disabled=false;
-      if(!r.ok){note.style.color='var(--warn)';note.textContent='回寫失敗：'+r.error;return;}
-      note.style.color='var(--ok)';note.textContent='已回寫 '+r.done+' 筆'+(r.failed&&r.failed.length?('，失敗 '+r.failed.length+' 筆'):'')+'，分數已發還學生。';
-    }).catch(function(e){self.disabled=false;note.style.color='var(--warn)';note.textContent='回寫失敗：'+e.message;});
+  if(!courseId){note.style.color='var(--warn)';note.textContent='請先選 Classroom 課程。';return;}
+  self.disabled=true;note.style.color='var(--muted)';
+  var wsName=(curWsCfg.title||curWs||'').trim(),created=false;
+  // 選了「建立新作業」就先開一份（後端會再確認一次同名作業，避免重複建立）
+  var workP;
+  if(pick==='__create__'){
+    note.textContent='建立作業「'+wsName+'」…';
+    workP=ccPost('/api/classroom/coursework',{courseId:courseId,title:wsName,
+      maxPoints:Number(digitsOnly($('#ccMax').value))||100,link:curWsCfg.url||'',
+      description:curWsCfg.url?('學習單：'+curWsCfg.url):''})
+      .then(function(r){if(!r.ok)throw new Error(r.error);created=r.created;return r.id;});
+  }else workP=Promise.resolve(pick);
+  workP.then(function(cwId){
+    note.textContent=(created?'作業已建立，':'')+'回寫中…（'+grades.length+' 筆）';
+    return ccPost('/api/classroom/grades',{courseId:courseId,courseWorkId:cwId,grades:grades});
+  }).then(function(r){self.disabled=false;
+    if(!r.ok){note.style.color='var(--warn)';note.textContent='回寫失敗：'+r.error;return;}
+    note.style.color='var(--ok)';
+    note.textContent=(created?('已建立作業「'+wsName+'」並'):'已')+'回寫 '+r.done+' 筆'
+      +(r.failed&&r.failed.length?('，失敗 '+r.failed.length+' 筆'):'')+'，分數已發還學生。';
+    if(pick==='__create__')$('#ccCourse').dispatchEvent(new Event('change'));   // 重新列作業，下次就對得到同名這份
+  }).catch(function(e){self.disabled=false;note.style.color='var(--warn)';note.textContent='失敗：'+e.message;});
 });
 // P3 AI 批次評分（整份學習單）
 $('#aiGrade').addEventListener('click',function(){batchGrade(this);});

@@ -14,7 +14,7 @@
 | `demo-worksheet.html` | 繳交測試示範頁 |
 | `worksheets.json` | 學習單登錄檔：完成一份就把網址寫進來 |
 | `firestore.rules` | Firestore 安全規則（到 Firebase Console 部署）|
-| `server.py` | 本機伺服器（port 8780）：靜態檔＋AI 評分＋Google OAuth／Classroom |
+| `server.py` | 本機伺服器（port 8780）：靜態檔＋AI 評分＋Google OAuth／Classroom（含依學習單名稱自動建立作業）|
 | `config.json` | 本專案自己的設定（AI Key、Google client_secret、token）——**執行後自動產生，不進 git** |
 | `啟動評分平台.bat` | 雙擊啟動；用旁邊工作台的 portable Python 執行 |
 | `SPEC.md` / `PROGRESS.md` | 規格與施工進度 |

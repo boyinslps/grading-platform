@@ -291,6 +291,46 @@ def classroom_students(course_id):
         return {"ok": False, "error": str(e)}
 
 
+def _norm_title(s):
+    return re.sub(r"\s+", "", str(s or "")).lower()
+
+
+def classroom_find_coursework(course_id, title):
+    """依標題找現有作業（正規化比對，忽略空白與大小寫）。回傳 courseWork dict 或 None。"""
+    data = _gapi(f"https://classroom.googleapis.com/v1/courses/{course_id}/courseWork?pageSize=100")
+    want = _norm_title(title)
+    for w in data.get("courseWork", []):
+        if _norm_title(w.get("title")) == want:
+            return w
+    return None
+
+
+def classroom_create_coursework(course_id, title, max_points=100, link="", description=""):
+    """找不到同名作業時，依學習單名稱建立一份新作業（PUBLISHED，全班指派）。"""
+    if not (course_id and str(title or "").strip()):
+        return {"ok": False, "error": "缺 courseId 或作業標題"}
+    try:
+        found = classroom_find_coursework(course_id, title)
+        if found:
+            return {"ok": True, "created": False, "id": found["id"],
+                    "title": found.get("title", ""), "maxPoints": found.get("maxPoints")}
+        body = {
+            "title": str(title).strip(),
+            "workType": "ASSIGNMENT",
+            "state": "PUBLISHED",
+            "maxPoints": float(max_points) if max_points else 100.0,
+        }
+        if description:
+            body["description"] = str(description)[:2000]
+        if link:
+            body["materials"] = [{"link": {"url": link}}]
+        w = _gapi(f"https://classroom.googleapis.com/v1/courses/{course_id}/courseWork", "POST", body)
+        return {"ok": True, "created": True, "id": w["id"],
+                "title": w.get("title", ""), "maxPoints": w.get("maxPoints")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def classroom_grades(course_id, coursework_id, grades):
     if not (course_id and coursework_id):
         return {"ok": False, "error": "缺 courseId 或 courseWorkId"}
@@ -298,6 +338,11 @@ def classroom_grades(course_id, coursework_id, grades):
     try:
         subs = _gapi(base + "?pageSize=200")
         by_user = {s.get("userId"): s.get("id") for s in subs.get("studentSubmissions", [])}
+        # 剛建立的作業，Classroom 生成每位學生的 studentSubmission 有短暫延遲；空的話等一下再讀一次。
+        if not by_user:
+            time.sleep(2)
+            subs = _gapi(base + "?pageSize=200")
+            by_user = {s.get("userId"): s.get("id") for s in subs.get("studentSubmissions", [])}
     except Exception as e:
         return {"ok": False, "error": "讀取作業繳交失敗：" + str(e)}
     done, failed = [], []
@@ -424,6 +469,10 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/google/logout":
                 cfg = read_config(); cfg.pop("google_token", None); save_config(cfg)
                 return self._send(200, {"ok": True})
+            if u.path == "/api/classroom/coursework":
+                return self._send(200, classroom_create_coursework(
+                    data.get("courseId", ""), data.get("title", ""),
+                    data.get("maxPoints", 100), data.get("link", ""), data.get("description", "")))
             if u.path == "/api/classroom/grades":
                 return self._send(200, classroom_grades(data.get("courseId", ""), data.get("courseWorkId", ""), data.get("grades", [])))
             return self._send(404, {"error": "no route"})

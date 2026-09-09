@@ -57,7 +57,8 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 | GET `/api/google/courses` | 列教師的 Classroom 課程 |
 | GET `/api/classroom/coursework` | 列某 Classroom 課程的作業 |
 | GET `/api/classroom/students` | 列某 Classroom 課程名單（需 `classroom.rosters.readonly` scope） |
-| POST `/api/classroom/grades` | 回寫分數到指定 courseWork（patch draft+assigned 後 `:return`） |
+| POST `/api/classroom/coursework` | **依標題確保作業存在**：先找同名作業，找不到才建立（PUBLISHED、全班指派、附學習單連結）→ 回 {id, created} |
+| POST `/api/classroom/grades` | 回寫分數到指定 courseWork（patch draft+assigned 後 `:return`）；讀不到 studentSubmissions 時等 2 秒重讀一次（剛建立的作業有生成延遲） |
 | GET `/api/diagnostics` | AI／Google 連線狀態快覽 |
 - 名單匯入（CSV/貼上/XLSX）與成績 CSV 匯出**純前端**處理（見 `teacher.html`），不走 server。
 - `/api/grade-scratch`（Scratch 盤點）與 `/api/git-publish`（發布網站）**只存在工作台/server.py**，評分平台目前不需要這兩個（P5 Scratch 評分擱置中）。
@@ -93,7 +94,11 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 ## 8. 已決策（原「待確認」，教師已定案）
 - **繳交對應學生**：年級／班級／學號（三個數字），不用姓名、不需登入。見學習單資料規範 §1。
 - **評分粒度**：`score` 題自動核對算 `accuracyRate`；`experience` 題只算 `experienceCompletion`（不進正確率）；`open` 題送 AI／教師給 `totalScore`。三軌並存，非二選一。
-- **Classroom 回寫**：維持半自動——選課程＋作業，系統以姓名比對（新式提交無姓名時退化為手動指定，已知限制，見下）。
+- **Classroom 回寫**：選課程即可，**作業不必先在 Classroom 開好**——系統以目前學習單的標題（`curWsCfg.title`）正規化比對該課程的既有作業：
+  - **找到同名** → 自動選取那一份，滿分欄帶入該作業的 maxPoints，成績寫進去。
+  - **找不到** → 作業下拉預選「建立新作業：{學習單標題}」，按下「回寫成績」時才真的建立（`workType:ASSIGNMENT`、`state:PUBLISHED`、`maxPoints` 可在 UI 改、`materials` 附上學習單網址），建完立刻寫成績。
+  - **不會重複建立**：後端 `classroom_create_coursework` 在建立前會再找一次同名作業，找到就直接沿用（前端清單過期或連按兩次都安全）。教師也可隨時從下拉改選任一現有作業。
+  - 學生對應：優先用名單裡的 `classroomUserId` 精準比對，退化為姓名比對，對不到可手動指定或設「不回寫」。
 
 ## 9. 已知限制與後續強化
 - ~~新識別模型無姓名無法自動配對 Classroom~~ → **已解決**：從 Classroom 匯入名單時（教師端「從 Classroom 匯入」）會保留 `classroomUserId`，回寫時用「年級+班級+學號 → 名單 → classroomUserId」精準比對；手動匯入（CSV/貼上/xlsx）的班級仍只能靠姓名猜或手動指定。
