@@ -9,7 +9,7 @@
 ## 檔案
 | 檔案 | 說明 |
 |---|---|
-| `teacher.html` | 教師端（登入→選班級/學習單→設定答案/規準→評分→匯出/回寫 Classroom）|
+| `teacher.html` | 教師端（登入→選班級/學習單→設定答案/規準→評分→匯出/回寫 Classroom；名單可單班匯入或**批量匯入全部 Classroom 班級**）|
 | `student-submit.js` | 可重用的學生「繳交」模組（互動教材引入即可）|
 | `demo-worksheet.html` | 繳交測試示範頁 |
 | `worksheets.json` | 學習單登錄檔：完成一份就把網址寫進來 |

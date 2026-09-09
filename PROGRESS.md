@@ -14,6 +14,7 @@
 - [x] **P4 名單/匯出/Classroom**（完成，P8 再強化見下）：
   - [x] **P4-a 成績匯出 CSV**：改列年級/班級/學號/正確率/體驗完成度/AI分/最終分/狀態/繳交時間＋UTF-8 BOM，且**只匯出目前篩選的班級**（見 P8）。
   - [x] **P4-b 名單匯入**：三管道（貼上文字／上傳 CSV 或 XLSX／從 Classroom 匯入），寫 `courses/{grade}-c{className}` ＋ `students/{seat}`（見 P8 詳述）。
+  - [x] **P4-d 批量匯入全部班級**：一次掃全部 Classroom 課程 → 自動分班 ＋ 例外清單（可當場補齊/略過）→ 分段 batch 寫入（見下方第 12 輪）。
   - [x] **P4-c Classroom**：後端 `/api/classroom/coursework`、`/students`、`/grades`。前端回寫 modal：選課程→選作業→拉名單→自動對應（**已升級成可用 classroomUserId 精準比對**，見 P8）→送出並發還。
 - [~] **P5 Scratch 評分**：後端 `/api/grade-scratch`（.sb3 解 zip 讀 project.json → 盤點精靈/積木/變數/概念）**已測**。前端上傳 UI＋依 rubric/AI 給分＝下輪。
 - [x] **獨立專案化**：評分平台成為獨立資料夾——自有 `server.py`（靜態，port 8780）＋`啟動評分平台.bat`（用旁邊工作台的 portable Python，已修正 CRLF/中文路徑問題）＋`README.md`＋`.gitignore`。**連動**：AI/Classroom/金鑰仍走工作台 8770（CORS）；本專案不存金鑰。已煙霧測試通過。**已 `git init` 並完成初始 commit**（`81d91dd`，本機、未推遠端）；**待教師指定遠端 repo 名稱/URL 才能 push**（曾詢問未得到回覆，不擅自建立）。
@@ -37,6 +38,11 @@
   - 全部改動**已在瀏覽器實測**（Classroom 姓名解析 regex 對兩種真實格式都正確、`parseRoster` 正確跳過標題列、`matchCourse`/`currentSubs` 過濾邏輯正確、`gradeOne` 無開放題時不打網路請求且正確採用 accuracyRate、教師端所有新增 DOM 元素齊全、無 console error）。L01 已推送 GitHub（`73f07b6..7571f18`）。評分平台本機 commit 待遠端指定。
 
 ## 本輪做了什麼（最新在上）
+- **2026-09-09 · 批量匯入全部班級（P4-d，教師指定）**：teacher.html 工具列加「批量匯入全部班級」→ `cbModal`。`cbScan()` 打 `/api/google/courses` 取全部課程，**逐課依序**（不併發，避免打爆 Classroom 配額）打 `/api/classroom/students`，用既有 `parseClassroomName()` 拆「年班 座號 姓名」，邊掃邊顯示「讀取名單 3 / 12：五年級電腦」。結果分兩區呈現：上方「將建立／更新的班級」摘要（班級／人數／來源課程），下方**例外清單**（課程／原始名稱／原因／可編輯的年級·班級·座號·姓名／略過勾選）。
+  - **例外三來源**：①姓名不合命名格式；②同班座號撞號（`seen[cid#seat]`，後者標成例外並指出被誰佔用）；③整個課程讀取失敗或沒學生（以課程為單位顯示在掃描結果那行）。
+  - **即時回饋**：例外列一改就 `cbRecalc()`——補齊的立刻併進上方班級摘要、匯入鈕文字同步變成「匯入 N 位（M 班）」、標頭顯示「待補齊 x、已略過 y、已補好 z」；勾略過的列淡出。撞號時 `#cbNote` 出橘字警告。補不齊的按匯入時自動跳過（不擋流程）。
+  - **分段寫入**：新增 `commitChunked(ops,onProgress)`，因 Firestore 單一 batch 上限 500 筆，全校名單必超過；以 450 筆為一段依序 commit 並回報「匯入中… 900 / 1350」。
+  - **驗證**：瀏覽器實測——注入 6 筆合成名單（含 1 筆格式不符、1 筆撞號）驗出分組 `g5-c10:2 / g5-c1:2 / g6-c3:1`、例外原因文字正確；再模擬教師操作（把「陳大同」補成 5年1班20號 → 併回摘要、匯入數 5→6；把撞號的張三勾略過 → 回到 5、警告消失、該列 opacity .45）。版面在 1280px 下量測：面板 900、表格 850、每列單行 40px 不擠壓，窄視窗改橫向捲動（表格 `min-width`）。無 console error。
 - **2026-09-08 · 評分平台獨立運作（自帶 AI＋Google OAuth）＋修真正的 fetch 故障根因**：
   - 教師回報「工作台後端也開了，還是 fetch 不到」。**實際診斷**：`netstat` 發現 8770／8780 上各同時卡了好幾個殘留的舊 server 行程（我先前測試時 `kill $(cat pidfile)` 沒有真的殺掉背景的 python.exe 子行程），瀏覽器的請求隨機打到「沒有 CORS 修正」的舊行程上，導致 fetch 間歇性失敗——外觀上就是「fetch 不到」。已用 `taskkill //F //PID` 逐一清乾淨，兩個 port 現在都只剩一個乾淨行程。**教訓**：以後起測試 server 要用 `netstat` 確認真的只有一個行程在聽，不能只信任 kill 有成功。
   - 依教師指示，把 8770 依賴徹底拔掉：**評分平台/server.py 重寫**，自己實作一份完整的 AI 評分（`_llm_call`/`_llm_models`/`grade_call`/`grade_submission`/`_ai_grade`）與 Google OAuth／Classroom（`google_auth_url`/`google_exchange`/`google_access_token`/`google_courses`/`classroom_coursework`/`classroom_students`/`classroom_grades`），設定讀寫走自己的 `config.json`（`google_client_secret`／`grade_key` 這類金鑰**已加進 `.gitignore`**，且確認從未進過 git 歷史）。OAuth redirect 改成 `http://127.0.0.1:8780/oauth/callback`。
