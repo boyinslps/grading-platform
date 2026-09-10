@@ -1122,6 +1122,12 @@ $('#cbGo').addEventListener('click',function(){
 var CC={students:[]};
 function ccGet(p){return fetch(WORKBENCH+p).then(function(r){return r.json();});}
 function normName(s){return String(s||'').replace(/\s+/g,'').trim();}
+// 目前學習單的週次（L0X → 第X週；同一週的簽到問題由「工作台」發布，標題固定「第X週 單元名稱」）。
+// 從 url（.../g5/L01/）或 worksheet id（g5-L01）任一處抓得到 L 後面的數字即可，兩者都沒有就回 null（退回舊式對標題比對）。
+function weekOf(){
+  var src=(curWsCfg.url||'')+' '+(curWs||''),m=src.match(/L(\d{1,3})/i);
+  return m?Number(m[1]):null;
+}
 $('#pushClassroom').addEventListener('click',function(){
   var graded=currentSubs().filter(function(s){return s.totalScore!=null;});
   if(!graded.length){$('#mainNote').textContent='目前這個班級沒有已評分的成績可回寫（先評分並儲存最終分）。';return;}
@@ -1145,19 +1151,35 @@ $('#ccCourse').addEventListener('change',function(){
   Promise.all([ccGet('/api/classroom/coursework?courseId='+encodeURIComponent(cid)),studP]).then(function(res){
     var r=res[0];
     if(!r.ok){$('#ccWork').innerHTML='<option value="">'+(r.error||'讀取失敗')+'</option>';return;}
-    var wsName=(curWsCfg.title||curWs||'').trim();
-    // 依學習單名稱找同名作業（忽略空白/大小寫）；找不到就準備建立一份同名的
-    var want=normName(wsName).toLowerCase(),hit=null;
-    (r.courseWork||[]).forEach(function(w){if(!hit&&normName(w.title).toLowerCase()===want)hit=w;});
+    var wsName=(curWsCfg.title||curWs||'').trim(),wk=weekOf(),hit=null,matchedBy='';
+    // 優先依週次比對：找標題以「第X週」開頭的作業（工作台發布的簽到問題），同一週的學習單都寫進同一份
+    if(wk!=null){
+      var wkPat=new RegExp('^第0*'+wk+'週');
+      (r.courseWork||[]).forEach(function(w){if(!hit&&wkPat.test((w.title||'').trim()))hit=w;});
+      if(hit)matchedBy='week';
+    }
+    // 找不到週次作業（或這份學習單抓不到週次）時，退回舊式：依學習單標題找同名作業
+    if(!hit){
+      var want=normName(wsName).toLowerCase();
+      (r.courseWork||[]).forEach(function(w){if(!hit&&normName(w.title).toLowerCase()===want)hit=w;});
+      if(hit)matchedBy='title';
+    }
     var opts=(r.courseWork||[]).map(function(w){return '<option value="'+w.id+'">'+w.title+(w.maxPoints!=null?(' （滿分 '+w.maxPoints+'）'):'')+'</option>';});
     opts.unshift('<option value="__create__">建立新作業：'+wsName+'</option>');
     $('#ccWork').innerHTML=opts.join('');
-    $('#ccWork').value=hit?hit.id:'__create__';
     if(hit){
+      $('#ccWork').value=hit.id;
       $('#ccWorkNote').style.color='var(--ok)';
-      $('#ccWorkNote').textContent='已對到同名作業「'+hit.title+'」，成績會寫進這一份。';
+      $('#ccWorkNote').textContent=matchedBy==='week'
+        ?('已依「第'+wk+'週」比對到「'+hit.title+'」，成績會寫進這份週次簽到作業。')
+        :('已對到同名作業「'+hit.title+'」，成績會寫進這一份。');
       if(hit.maxPoints!=null)$('#ccMax').value=hit.maxPoints;
+    }else if(wk!=null){
+      $('#ccWork').value='__create__';
+      $('#ccWorkNote').style.color='var(--warn)';
+      $('#ccWorkNote').textContent='這是第'+wk+'週的學習單，但這門課還沒有「第'+wk+'週」開頭的作業（簽到問題）。建議先到工作台發布本週的簽到問題，或從上面改選現有作業／直接建立一份新作業。';
     }else{
+      $('#ccWork').value='__create__';
       $('#ccWorkNote').style.color='var(--muted)';
       $('#ccWorkNote').textContent='此課程沒有名為「'+wsName+'」的作業，送出時會依這個名稱建立一份新作業（附上學習單連結）再寫入成績。也可以從上面改選現有作業。';
     }
