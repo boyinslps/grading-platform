@@ -157,6 +157,89 @@ def _ai_grade(open_items, rubric, questions):
         return {"ok": False, "error": f"JSON 解析失敗：{e}"}
 
 
+def _ai_grade_batch(items, rubric, questions, want_feedback):
+    """整批（同一班）一次 AI 呼叫評完，不是逐筆呼叫 /api/grade。
+    items: [{"key":<submission id>, "answers":{qid:text,...}}, ...]
+    回傳 {"ok":True,"results":{key:{"score":0-100,"feedback":str}},"missing":[key,...]} 或 {"ok":False,"error":...}
+    """
+    if not items:
+        return {"ok": True, "results": {}, "missing": []}
+    qmap = {q.get("qid"): q for q in (questions or [])}
+    if rubric and rubric.get("criteria"):
+        rub = "評分規準：\n" + "\n".join(
+            f"- {c.get('name','')}（{c.get('points','')} 分）：{c.get('desc','')}" for c in rubric["criteria"])
+    else:
+        rub = "評分規準：未提供。請就內容完整度、正確性、是否切題，給 0–100 分。"
+    # 用短代號（k0、k1…）當 JSON 鍵，不直接把 Firestore doc id 塞進 prompt——
+    # 代號在伺服器端跟 key 一一對應，回來再換回去，不必擔心 doc id 裡的符號讓 AI 產生非法 JSON 鍵名。
+    aliases = [f"k{i}" for i in range(len(items))]
+    blocks = []
+    for alias, it in zip(aliases, items):
+        lines = [f"【{alias}】"]
+        for qid, ans in (it.get("answers") or {}).items():
+            pq = (qmap.get(qid, {}) or {}).get("prompt", "")
+            lines.append(f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}")
+        blocks.append("\n".join(lines))
+    feedback_field = ',"feedback":"<給這位學生的兩三句中文回饋>"' if want_feedback else ""
+    schema = "{" + f'"{aliases[0]}":{{"score":<0到100整數>{feedback_field}}}' + ",...}"
+    prompt = (
+        "你是國小資訊課的閱卷老師，語氣鼓勵但誠實。以下是同一個班級、同一份學習單裡多位學生的開放題作答，"
+        "請逐一評分，每位學生獨立評、不要互相比較高低，也不要因為人數多就每個都給差不多的分數。\n"
+        + rub + "\n\n" + "\n\n".join(blocks) +
+        "\n\n只輸出一個 JSON 物件（無多餘文字、無程式碼圍欄），"
+        f"每位學生都要用【】裡的代號當鍵名、一個不漏，格式例如：{schema}"
+    )
+    r = grade_call(prompt)
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error", "AI 呼叫失敗")}
+    m = re.search(r'\{.*\}', r.get("text", ""), re.S)
+    if not m:
+        return {"ok": False, "error": "AI 未回傳 JSON：" + r.get("text", "")[:300]}
+    try:
+        parsed = json.loads(m.group(0))
+    except Exception as e:
+        return {"ok": False, "error": f"JSON 解析失敗：{e}"}
+    if not isinstance(parsed, dict):
+        return {"ok": False, "error": "AI 回傳的不是預期的 JSON 物件"}
+    results, missing = {}, []
+    for alias, it in zip(aliases, items):
+        entry = parsed.get(alias)
+        score = entry.get("score") if isinstance(entry, dict) else None
+        if score is None:
+            missing.append(it["key"])
+            continue
+        try:
+            score = max(0, min(100, round(float(score))))
+        except Exception:
+            missing.append(it["key"])
+            continue
+        results[it["key"]] = {"score": score,
+                               "feedback": (entry.get("feedback") or "") if want_feedback else ""}
+    return {"ok": True, "results": results, "missing": missing}
+
+
+def grade_batch(payload):
+    """POST /api/grade-batch：整個班級一次呼叫（見 _ai_grade_batch）；超過 CHUNK 人才分段，
+    每段仍是一次呼叫評多人，不會退化成逐筆呼叫。"""
+    items = payload.get("items") or []
+    rubric = payload.get("rubric")
+    questions = payload.get("questions") or []
+    want_feedback = bool(payload.get("wantFeedback"))
+    CHUNK = 40
+    all_results, all_missing, errors = {}, [], []
+    for i in range(0, len(items), CHUNK):
+        chunk = items[i:i + CHUNK]
+        r = _ai_grade_batch(chunk, rubric, questions, want_feedback)
+        if not r.get("ok"):
+            errors.append(r.get("error", "AI 呼叫失敗"))
+            all_missing.extend(it["key"] for it in chunk)
+            continue
+        all_results.update(r.get("results") or {})
+        all_missing.extend(r.get("missing") or [])
+    return {"ok": True, "results": all_results, "missing": all_missing,
+            "error": "；".join(errors) if errors else None}
+
+
 def grade_submission(payload):
     answers = payload.get("answers") or {}
     answer_key = payload.get("answerKey") or {}
@@ -466,6 +549,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if u.path == "/api/grade":
                 return self._send(200, grade_submission(data))
+            if u.path == "/api/grade-batch":
+                return self._send(200, grade_batch(data))
             if u.path == "/api/google/logout":
                 cfg = read_config(); cfg.pop("google_token", None); save_config(cfg)
                 return self._send(200, {"ok": True})

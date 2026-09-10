@@ -38,6 +38,13 @@
   - 全部改動**已在瀏覽器實測**（Classroom 姓名解析 regex 對兩種真實格式都正確、`parseRoster` 正確跳過標題列、`matchCourse`/`currentSubs` 過濾邏輯正確、`gradeOne` 無開放題時不打網路請求且正確採用 accuracyRate、教師端所有新增 DOM 元素齊全、無 console error）。L01 已推送 GitHub（`73f07b6..7571f18`）。評分平台本機 commit 待遠端指定。
 
 ## 本輪做了什麼（最新在上）
+- **2026-09-10 · AI 批次評分改成整班一次呼叫＋新增評語欄（教師指定）**：教師發現「已評分」標籤最後一字被擠到下一行，順手確認 AI 批次評分是不是逐筆呼叫 AI——**答案是：舊版真的是逐筆**（`batchGrade()` 對每筆繳交各自呼叫一次 `gradeOne()`→`/api/grade`），這輪整個換掉：
+  - **UI 小修**：`.tag{white-space:nowrap}`——這一個屬性就解決了「已評分」擠斷行。
+  - **新後端 `POST /api/grade-batch`**（`_ai_grade_batch()`＋`grade_batch()`）：整班「有開放題」的學生一次組進同一個 prompt，每人一段用短代號 `k0`/`k1`… 標記（不把 Firestore doc id 直接塞進 prompt），要求 AI 回一個以代號為鍵的 JSON 物件；伺服器收到後把代號換回真正的 submission id 逐一比對——**這是確保「回傳格式能準確對應到學生」的關鍵**：鍵名範圍固定由伺服器決定，AI 只要照抄，就不會有对不上的問題。AI 漏答或分數不是合法數字的學生歸進 `missing`（不補假分數），分數會 clamp 在 0–100。超過 40 人自動分段送出，但每段仍是整批呼叫，不會退化成一人一次。
+  - **前端 `batchGrade()` 整個重寫**：先分成「有開放題」／「無開放題」兩組，無開放題的完全不進 AI 呼叫、本地 `calcScore()` 直接算完；有開放題的**整個班級只打一次** `/api/grade-batch`。AI 沒回應的學生保持未評分（不寫分數、狀態不變 `graded`），結果訊息會明講「X 位 AI 沒有回應，可再跑一次或手動評」。所有更新最後用 Firestore **一次 `batch()` 寫入**（不是逐筆 `.update()`，450 筆一段沿用既有 `commitChunked` 慣例）。
+  - **新增「附評語」勾選框**（AI 批次評分按鈕旁）：勾了才在 prompt 多要求 `feedback`（省 token 也省時間），回來的評語存進既有的 `submissions.aiFeedback` 欄位；教師端表格新增「評語」欄（AI 分數旁），過長用 `title` 顯示完整內容。**目前評語只到教師端＋該學生自己的 Firestore 文件**，還沒有推到 Google Classroom（API 沒有可寫的私訊評語欄位，只能寫數字分數——平台限制，跟先前「Classroom 一定發動態時報」是同一類誠實說明）；要讓學生在學習單頁面本身看到評語，需要另外擴充資料契約，本輪未做，已寫進 SPEC §7-e 留給下一輪判斷要不要做。
+  - **驗證**：伺服器端直接 `import server` 跑 `_ai_grade_batch`（不需真的 AI Key，mock `grade_call`）——全部成功＋評語正確對應、AI 漏一位時該位進 `missing` 不冒充分數、AI 回傳非 JSON 時整批 `ok:false` 附錯誤訊息、分數異常值（字串"105"／負數／非數字）分別被 clamp 或判定失敗、85 人自動分成 40/40/5 三段且每段仍是整批呼叫（用假 `grade_call` 數了每次呼叫涵蓋的人數）。前端用假 `fetch`＋假 `db` 測過三種情境（全部成功／AI 漏一人／整批 AI 失敗），確認只送「有開放題」的人給 AI、正確依 key 寫回分數與評語、AI 失敗或漏答時對應學生維持未評分不受影響、無開放題的學生完全繞過 AI。真實瀏覽器截圖確認「評語」欄與「附評語」勾選框正確顯示、`title` 提示完整評語文字、無 console error。
+  - **意外發現**：目前 `config.json` 的 AI 金鑰仍是先前回報的 401 invalid key 狀態（尚未修復），所以這輪驗證全部用 mock 繞過真實 AI 呼叫；等教師換好金鑰後，建議先用一個小班實際跑一次「AI 批次評分」確認真實回應格式跟 mock 假設的一致。
 - **2026-09-10 · 新增深色模式**：`teacher.html` 加頁首「深色/淺色模式」切換鈕。做法：
   - 把散落在 CSS 與 JS 產生字串裡的**全部**寫死 hex 顏色（表格表頭底色、批量匯入例外列橘底、正確/錯誤邊框、最終分數框邊框等，共約 20 處）改成 CSS 變數引用；新增 `--surface2`／`--accent-border`／`--ok-border`／`--warn-border`／`--score-border`／`--exc-bg`／`--shadow`／`--drawer-shadow` 幾個之前沒有對應變數的 token。
   - 深色調色盤透過 `@media (prefers-color-scheme:dark):root:not([data-theme="light"])` 與 `:root[data-theme="dark"]` 兩處定義（沒手動選過跟系統、選過的話手動優先），按鈕點擊即時切換（純變數重算，不需重整）並存 `localStorage`（key `wk_theme`）。`<head>` 最前面加一段同步小 script 先讀存好的偏好設定，避免翻頁閃一下淺色再變暗。

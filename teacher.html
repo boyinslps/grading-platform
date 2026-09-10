@@ -67,7 +67,7 @@
   td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
   tr:last-child td{border-bottom:none}
   tr:hover td{background:var(--surface2)}
-  .tag{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px}
+  .tag{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;white-space:nowrap}
   .tag.sub{background:var(--warn-soft);color:var(--warn)}.tag.graded{background:var(--ok-soft);color:var(--ok)}
   .empty{padding:48px 24px;text-align:center;color:var(--muted)}
   .empty .t{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
@@ -123,6 +123,7 @@
         <div><h1 id="wsTitle">尚未選擇學習單</h1><div class="meta" id="wsMeta">從左側選一份學習單，檢視學生繳交與批改。</div></div>
         <div class="tools">
           <button class="btn" id="wsSettings" disabled>學習單設定</button>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);padding:0 2px" title="勾選後 AI 批次評分會多花一點時間，為每位學生多寫一句評語"><input type="checkbox" id="aiFeedbackChk" style="margin:0">附評語</label>
           <button class="btn" id="aiGrade" disabled>AI 批次評分</button>
           <button class="btn" id="exportGrades" disabled>匯出成績</button>
           <button class="btn btn-primary" id="pushClassroom" disabled>回寫 Classroom</button>
@@ -168,10 +169,10 @@
         <table>
           <thead><tr>
             <th>學生</th><th style="width:100px">繳交時間</th>
-            <th style="width:90px">正確率/自動</th><th style="width:80px">AI</th><th style="width:90px">最終</th>
+            <th style="width:90px">正確率/自動</th><th style="width:64px">AI</th><th style="width:180px">評語</th><th style="width:90px">最終</th>
             <th style="width:96px">狀態</th><th style="width:80px"></th>
           </tr></thead>
-          <tbody id="rows"><tr><td colspan="7"><div class="empty"><div class="t">尚未選擇學習單</div>選一份學習單即可看到學生繳交清單。</div></td></tr></tbody>
+          <tbody id="rows"><tr><td colspan="8"><div class="empty"><div class="t">尚未選擇學習單</div>選一份學習單即可看到學生繳交清單。</div></td></tr></tbody>
         </table>
       </div>
       <p class="note" id="mainNote"></p>
@@ -482,12 +483,12 @@ function selectWs(id,w){
   loadSubs(id);
 }
 function loadSubs(id){
-  var rows=$('#rows');rows.innerHTML='<tr><td colspan="7"><div class="empty">載入繳交資料…</div></td></tr>';
+  var rows=$('#rows');rows.innerHTML='<tr><td colspan="8"><div class="empty">載入繳交資料…</div></td></tr>';
   db.collection('submissions').where('worksheetId','==',id).get().then(function(qs){
     subsCache=[];qs.forEach(function(d){subsCache.push(Object.assign({_id:d.id},d.data()))});
     subsCache.sort(function(a,b){return wkSortKey(a)-wkSortKey(b)});
     renderSubs();
-  }).catch(function(e){rows.innerHTML='<tr><td colspan="7"><div class="empty">讀取失敗：'+e.message+'</div></td></tr>';});
+  }).catch(function(e){rows.innerHTML='<tr><td colspan="8"><div class="empty">讀取失敗：'+e.message+'</div></td></tr>';});
 }
 function fmtTime(ts){try{var d=ts&&ts.toDate?ts.toDate():new Date(ts);return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}catch(e){return '—'}}
 // 學生識別（年級/班級/學號；見《學習單資料與提交規範》）；舊式（座號/姓名）留作相容顯示
@@ -500,9 +501,9 @@ function renderSubs(){
   var rows=$('#rows'),view=currentSubs();
   var courseLabel=(window._courses||[]).filter(function(c){return c.id===curCourse;})[0];
   courseLabel=courseLabel?courseLabel.name:(curCourse==='__other__'?'其他（未匹配班級座號）':'');
-  if(!subsCache.length){rows.innerHTML='<tr><td colspan="7"><div class="empty"><div class="t">尚無繳交</div>學生從互動教材按「繳交學習單」後，資料會出現在這裡。</div></td></tr>';
+  if(!subsCache.length){rows.innerHTML='<tr><td colspan="8"><div class="empty"><div class="t">尚無繳交</div>學生從互動教材按「繳交學習單」後，資料會出現在這裡。</div></td></tr>';
     setStats(0,0,0,null);return;}
-  if(!view.length){rows.innerHTML='<tr><td colspan="7"><div class="empty"><div class="t">'+courseLabel+' 沒有繳交</div>這份學習單有其他班級的繳交，換個班級看看。</div></td></tr>';
+  if(!view.length){rows.innerHTML='<tr><td colspan="8"><div class="empty"><div class="t">'+courseLabel+' 沒有繳交</div>這份學習單有其他班級的繳交，換個班級看看。</div></td></tr>';
     setStats(0,0,0,null);return;}
   rows.innerHTML='';
   var graded=0,sum=0,gcount=0;
@@ -516,6 +517,7 @@ function renderSubs(){
       '<td>'+fmtTime(s.submittedAt)+'</td>'+
       '<td>'+auto+'</td>'+
       '<td>'+(s.aiScore!=null?s.aiScore:'—')+'</td>'+
+      '<td>'+(s.aiFeedback?'<span class="hint" title="'+String(s.aiFeedback).replace(/"/g,'&quot;')+'" style="font-weight:400;color:var(--muted);display:block;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+s.aiFeedback+'</span>':'—')+'</td>'+
       '<td>'+(s.totalScore!=null?'<b>'+s.totalScore+'</b>':'—')+'</td>'+
       '<td><span class="tag '+(s.status==='graded'?'graded':'sub')+'">'+(s.status==='graded'?'已評分':'已繳交')+'</span></td>'+
       '<td><button class="btn" style="padding:4px 10px">批改</button></td>';
@@ -645,31 +647,66 @@ function saveScore(s){
     s.totalScore=Number(f);s.status='graded';s.autoScore=g.autoScore;s.aiScore=g.aiScore;renderSubs();
   }).catch(function(e){note.style.color='var(--warn)';note.textContent='儲存失敗：'+friendlyErr(e);});
 }
+// AI 批次評分：整個班級的開放題**一次 AI 呼叫**評完（/api/grade-batch），不是逐筆問 AI；
+// 沒有開放題的學生完全不佔這次呼叫，本地直接算完；最後所有成績用一次 Firestore batch 寫入，也不是逐筆 .update()。
 function batchGrade(btn){
   var list=currentSubs();
   if(!list.length){$('#mainNote').textContent='目前這個班級沒有可評分的繳交。';return;}
-  btn.disabled=true;var i=0,done=0,fail=0,aiUsed=0,skippedAI=0,stoppedForKey=false;
-  (function next(){
-    if(i>=list.length||stoppedForKey){
-      btn.disabled=false;renderSubs();
-      var msg='批次評分完成：成功 '+done+'（其中 '+aiUsed+' 份呼叫 AI、'+skippedAI+' 份無開放題直接採正確率）';
-      if(fail)msg+='，失敗 '+fail;
-      if(stoppedForKey)msg='已中止：AI 設定缺少 API Key，請到「AI 設定」填寫後再試。已完成 '+done+' 份（未呼叫 AI 的部分不受影響）。';
-      msg+='。分數可在批改抽屜逐筆調整。';
-      $('#mainNote').textContent=msg;return;
-    }
-    var s=list[i];
-    var hasOpen=Object.keys(s.openAnswers||{}).length>0;
-    $('#mainNote').textContent=(hasOpen?'AI 評分處理中…　':'採用正確率…　')+(i+1)+' / '+list.length;
-    gradeOne(s,false).then(function(g){
-      if(hasOpen)aiUsed++; else skippedAI++;
-      return db.collection('submissions').doc(s._id).update({autoScore:(g.autoScore!=null?g.autoScore:null),aiScore:(g.aiScore!=null?g.aiScore:null),aiFeedback:(g.aiFeedback||''),totalScore:(s._final===''?null:s._final),status:'graded',gradedAt:firebase.firestore.FieldValue.serverTimestamp()});
-    }).then(function(){s.totalScore=(s._final===''?s.totalScore:s._final);s.status='graded';done++;i++;next();})
-      .catch(function(e){
-        if(/API Key|端點 URL|尚未填/.test(e.message||'')){stoppedForKey=true;next();return;}
-        fail++;i++;next();
+  btn.disabled=true;
+  var cfg=scoringCfg(),withOpen=[],withoutOpen=[];
+  list.forEach(function(s){(Object.keys(s.openAnswers||{}).length?withOpen:withoutOpen).push(s);});
+  var updates=[];
+  withoutOpen.forEach(function(s){
+    var calc=calcScore(s,cfg,null);
+    s._calc=calc;s.totalScore=calc.total;s.aiScore=null;s.aiFeedback='';s.status='graded';
+    updates.push({id:s._id,autoScore:calc.objective,aiScore:null,aiFeedback:'',totalScore:calc.total});
+  });
+  function writeAndFinish(aiSummary){
+    var SIZE=450,chunks=[];
+    for(var i=0;i<updates.length;i+=SIZE)chunks.push(updates.slice(i,i+SIZE));
+    chunks.reduce(function(p,ck){
+      return p.then(function(){
+        var b=db.batch();
+        ck.forEach(function(u){b.update(db.collection('submissions').doc(u.id),{
+          autoScore:u.autoScore,aiScore:u.aiScore,aiFeedback:u.aiFeedback,totalScore:u.totalScore,
+          status:'graded',gradedAt:firebase.firestore.FieldValue.serverTimestamp()});});
+        return b.commit();
       });
-  })();
+    },Promise.resolve()).then(function(){
+      btn.disabled=false;renderSubs();
+      var msg='批次評分完成：'+updates.length+'／'+list.length+' 份已寫入（'
+        +withOpen.length+' 位有開放題、這個班級一次 AI 呼叫評完；'
+        +withoutOpen.length+' 位無開放題直接採計算結果，沒有呼叫 AI）'+(aiSummary||'')+'。分數可在批改抽屜逐筆調整。';
+      $('#mainNote').textContent=msg;
+    }).catch(function(e){btn.disabled=false;renderSubs();$('#mainNote').textContent='寫入分數失敗：'+friendlyErr(e);});
+  }
+  if(!withOpen.length){writeAndFinish('');return;}
+  var wantFeedback=$('#aiFeedbackChk').checked;
+  $('#mainNote').textContent='AI 評分處理中…（這個班級 '+withOpen.length+' 位有開放題，一次呼叫評完，不是一筆一筆問）';
+  var items=withOpen.map(function(s){return {key:s._id,answers:s.openAnswers};});
+  fetch(WORKBENCH+'/api/grade-batch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({items:items,rubric:curWsCfg.rubric,questions:curWsCfg.questions,wantFeedback:wantFeedback})})
+    .then(function(r){return r.json();}).then(function(g){
+      if(!g.ok){
+        writeAndFinish('；AI 批次評分失敗：'+(g.error||'未知錯誤')+'（開放題的 '+withOpen.length+' 位維持未評分，可再試一次）');
+        return;
+      }
+      var okCount=0;
+      withOpen.forEach(function(s){
+        var r=g.results&&g.results[s._id];
+        if(!r)return;   // 這位 AI 沒回來，保持未評分，不能用假分數蓋過去
+        var calc=calcScore(s,cfg,r.score);
+        s._calc=calc;s.totalScore=calc.total;s.aiScore=r.score;s.aiFeedback=r.feedback||'';s.status='graded';
+        updates.push({id:s._id,autoScore:calc.objective,aiScore:r.score,aiFeedback:r.feedback||'',totalScore:calc.total});
+        okCount++;
+      });
+      var missing=(g.missing||[]).length,extra='；AI 評分 '+okCount+'／'+withOpen.length+' 位成功';
+      if(missing)extra+='，'+missing+' 位 AI 沒有回應（保持未評分，可再跑一次或手動評）';
+      if(g.error)extra+='（部分批次錯誤：'+g.error+'）';
+      writeAndFinish(extra);
+    }).catch(function(e){
+      writeAndFinish('；AI 批次評分失敗：'+e.message+'（開放題的 '+withOpen.length+' 位維持未評分，可再試一次）');
+    });
 }
 
 // ---- 新增學習單（貼網址）----

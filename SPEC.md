@@ -48,7 +48,8 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 | 路由 | 功能 |
 |---|---|
 | GET/POST `/api/settings` | 讀寫本專案設定：`grade_provider/endpoint/key/model`（AI）、`google_client_id/secret`、`google_token`（授權後自動存） |
-| POST `/api/grade` | 收 {answers, answerKey?, rubric?, questions?} → 標準答案核對＋開放題丟 AI（見《AI串接窗口設定規範》）→ 回 {autoScore, aiScore, aiFeedback, perItem[]} |
+| POST `/api/grade` | 單筆：收 {answers, answerKey?, rubric?, questions?} → 標準答案核對＋開放題丟 AI（見《AI串接窗口設定規範》）→ 回 {autoScore, aiScore, aiFeedback, perItem[]}。用於批改抽屜對單一學生重新計算，不是批次評分的路徑（見下） |
+| POST `/api/grade-batch` | **整個班級一次 AI 呼叫**：收 {items:[{key,answers}], rubric?, questions?, wantFeedback} → 回 {results:{key:{score,feedback}}, missing:[key,...]}。教師端「AI 批次評分」走這條，不逐筆呼叫 `/api/grade`；超過 40 人會分段送出，但每段仍是一次呼叫評多人，不會退化成一人一次 |
 | GET `/api/grade-models` | 列 AI 可用模型 |
 | GET `/api/fetch-title` | 讀某網址 `<title>`（新增學習單時自動帶標題） |
 | GET `/api/google/auth-url` | 產生 Google 授權連結（redirect 指向本專案 `:8780/oauth/callback`） |
@@ -106,6 +107,17 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 - **範例**（呼應教師原話）：8 題體驗全對、無開放題 → 100 分；答錯 1 題 → 99 分；同一份若加一題開放題（AI 給 80）→ 非開放題滿分降為 90、答錯 2 題扣 2 分 → 88 分，AI 部分 80%×10=8 分，合計 96 分。
 - **UI**：`renderScoring()` 顯示總分／預設扣分／開放題保留分數三個輸入框，下面列出這份學習單目前出現過的**非開放題題號**（掃 `subsCache` 的 `scoreAnswers`/`experienceAnswers` 鍵，`nonOpenQids()`），逐題可覆寫扣分（留空＝用預設）。批改抽屜按「計算分數」時用 `renderCalcBox()` 顯示分解（非開放題幾分、扣了哪幾題、AI 開放題幾分＋回饋），最終分仍可手動覆寫再存。
 - **相容**：`/api/grade` 的 `answerKey` 參數與逐題 `perItem` 顯示保留給舊資料（早期用手填標準答案存過 `worksheets.answerKey` 的學習單），新學習單一律不再寫這個欄位。
+
+### 7-e. AI 批次評分：整班一次呼叫，不逐筆問 AI（2026-09-10 教師指定）
+> 動機：一筆一筆呼叫 AI 既慢又貴，而且班上人數一多，AI 額度/速率限制容易先撞到；同一班一次呼叫也讓 AI 看得到同一題的其他人怎麼寫，評分尺度更一致。
+
+- **後端** `POST /api/grade-batch`（見 §4）：`_ai_grade_batch()` 把整班所有「有開放題」的學生一次組進同一個 prompt（每人一段，用短代號 `k0`/`k1`… 當區隔，不是把 Firestore doc id 直接塞進 prompt），要求 AI 回一個**以代號為鍵**的 JSON 物件，每人一個 `{score, feedback?}`。伺服器收到後把代號換回原本的 `key`（學生的 submission id）逐一比對——**這是「回傳格式能不能準確對應到學生」的關鍵設計**：鍵名由伺服器指定、範圍固定，AI 只要照抄鍵名，就不會有「回傳順序跟送出順序不一致」或「AI 自己編了個名字」這類對不上的問題。
+  - AI 漏答某個代號、或該代號的 `score` 不是合法數字 → 那位學生歸進 `missing`，**不會**補一個假分數；分數會被 clamp 在 0–100（例如 AI 回 "105" 或 -20 都會被夾住，不是照單全收）。
+  - 超過 40 人會分段送出（`CHUNK=40`），但每段仍是「一次呼叫評多人」，不是退化成一人一次；每段各自的成功/失敗互不影響（某段失敗只讓那段的人進 `missing`，其他段照常）。
+- **前端** `batchGrade()`：先把目前篩選班級的繳交分成「有開放題」/「沒有開放題」兩組——沒有開放題的完全不進這次 AI 呼叫、本地直接用 `calcScore()` 算完；有開放題的**這個班級只打一次** `/api/grade-batch`。AI 沒回應的學生保持未評分（不寫 `totalScore`、`status` 不變成 `graded`），批次結果的訊息會明講「X 位 AI 沒有回應，可再跑一次或手動評」，教師不會誤以為全部批改完成。最後所有更新用 Firestore **一次 `batch()` 寫入**（超過 450 筆才分段，見既有 `commitChunked` 慣例），不是逐筆 `.update()`。
+- **附評語（教師指定）**：AI 批次評分按鈕旁一個「附評語」勾選框，勾了才在 prompt 裡多要求 `feedback` 欄位（省 token、也省 AI 生成時間）；收到的 `feedback` 存進 `submissions/{id}.aiFeedback`（既有欄位，只是現在批次評分真的會填它），教師端繳交表格 AI 分數旁新增「評語」欄顯示（過長用 `title` 提示完整內容，滑鼠移過去看）。
+  - **目前的「附給該學生」範圍**：評語寫進該學生自己的 `submissions` 文件、教師端看得到——**還沒有**推到 Google Classroom（Classroom API 沒有可寫入的「私訊評語」欄位，只能寫數字分數，這點是平台限制不是本工具沒做，跟 §8「Classroom 回寫」的 `PUBLISHED` 一定發動態時報是同一類誠實限制）；如果要讓**學生自己在學習單頁面上看到評語**，需要之後在《學習單資料與提交規範》裡定一個「查看評語」的介面契約並讓 `student-submit.js`／各學習單一起改，屬於後續擴充，本輪未做。
+- **驗證（伺服器端 `_ai_grade_batch` 直接跑 Python，不需真的 AI Key）**：mock `grade_call` 測過——全部成功＋評語正確對應、AI 漏一位時該位進 `missing` 不冒充分數、AI 回傳非法 JSON 時整批 `ok:false` 並附錯誤訊息、分數異常值（字串"105"／負數／非數字）分別被 clamp 或判定失敗、85 人自動分成 40/40/5 三段且每段仍是整批呼叫。前端 `batchGrade()` 用假 `fetch` 測過三種情境（全部成功／AI 漏一人／整批 AI 失敗），皆正確只送「有開放題」的人、正確依 key 寫回、AI 失敗或漏答時對應學生維持未評分、無開放題的學生完全不受 AI 結果影響。
 
 ## 8. 已決策（原「待確認」，教師已定案）
 - **繳交對應學生**：年級／班級／學號（三個數字），不用姓名、不需登入。見學習單資料規範 §1。
