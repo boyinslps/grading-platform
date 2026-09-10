@@ -38,6 +38,7 @@
   - 全部改動**已在瀏覽器實測**（Classroom 姓名解析 regex 對兩種真實格式都正確、`parseRoster` 正確跳過標題列、`matchCourse`/`currentSubs` 過濾邏輯正確、`gradeOne` 無開放題時不打網路請求且正確採用 accuracyRate、教師端所有新增 DOM 元素齊全、無 console error）。L01 已推送 GitHub（`73f07b6..7571f18`）。評分平台本機 commit 待遠端指定。
 
 ## 本輪做了什麼（最新在上）
+- **2026-09-10 · 修正 L01「返回教師模式」仍要求登入的根因**：教師實測回報上一輪的登入持久化修正沒生效。追出真正原因——`boot()` 的非 admin 分支一律呼叫 `auth.signInAnonymously()`，而這正是「預覽學生模式」重整後會走的路徑；`signInAnonymously()` 會把已登入帳號直接換成匿名使用者，等於蓋掉 Firebase 本機持久化的教師 session，「返回教師模式」當然只看得到剛蓋掉之後的匿名狀態。改成該分支也先用 `onAuthStateChanged` 確認真的沒登入過才簽名匿名；已有登入狀態（教師帳號或先前的匿名 session）就直接沿用不動它。已用本機臨時伺服器確認整段 IIFE 仍正常解析執行（signInAnonymously 路徑本身照常運作，feed 讀取失敗是既有、無關的 Firestore 複合索引問題，不是本次改動造成）。已同步發布並推送（`2478be9`）。
 - **2026-09-10 · Classroom 回寫改依「週次」比對（教師指定，跨兩個專案）**：教師想法——每週在 Classroom 開一份「簽到」單選題（工作台發布），之後這週不管有幾份學習單，回寫成績都寫進同一份簽到題，不要每份學習單各自長一份作業。
   - **工作台**（`工作台/web/index.html`＋`server.py`，這個專案本身沒有版本控制，不進 git）：「發布到 Classroom」的 `#pubType` 新增「問題」選項（`MULTIPLE_CHOICE_QUESTION`）。切到這個類型會自動套模板：標題＝`第{X}週 {單元名稱}`（X 從節次資料夾 `L0X` 推出，`weekNumOf()`）、選項預設「簽到」（沿用原本的「內容文字」欄位，切成問題類型時 label 換成「選項（每行一個）」）。後端 `classroom_publish()` 加 `question` 分支：把文字方塊每行拆成一個選項，組 `multipleChoiceQuestion.choices` 送出。已用真實 TREE 資料實測：選 L01_假消息與目的辨識、切換問題類型 → 標題自動變「第1週 假消息與目的辨識」、選項欄變「簽到」、下方提示文字正確顯示；無 console error。
   - **評分平台**（`teacher.html`）：新增 `weekOf()`——從 `curWsCfg.url`（`.../g5/L01/`）或學習單 id（`g5-L01`）抓 `L` 後面數字當週次。`ccCourse` 的 change handler 改成兩層比對：**先**找該課程裡標題以「第X週」開頭的作業（工作台發布的週次簽到題）命中就直接選定＋提示「已依第X週比對到…」；沒週次或找不到才**退回**舊式的學習單標題比對；兩者都沒有才預選「建立新作業」，且提示文字會建議教師「先到工作台發布本週的簽到問題」而不是直接默默建一份不相關的新作業。
