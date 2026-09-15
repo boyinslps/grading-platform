@@ -47,10 +47,6 @@ service cloud.firestore {
       match /students/{sid} {
         allow read, write: if isTeacher();
       }
-      // 即時繳交視窗的「請假」標記（live-submit.html），老師手動點擊，見學習單資料規範相關說明
-      match /absences/{ws} {
-        allow read, write: if isTeacher();
-      }
     }
 
     // --- 開放題即時同儕動態（留言牆；見《學習單資料與提交規範》§4）---
