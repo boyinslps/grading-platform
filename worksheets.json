@@ -6,6 +6,8 @@
     "url": "學習單公開網址（GitHub Pages）；教師端會用 網址#admin 開啟該學習單的答案設定頁"
   },
   "worksheets": [
-    { "id": "g5-L01", "category": "五上", "url": "https://boyinslps.github.io/pcclass/g5/L01/" }
+    { "id": "g5-L01", "category": "五上", "url": "https://boyinslps.github.io/pcclass/g5/L01/" },
+    { "id": "g4-L01", "category": "四上", "url": "https://boyinslps.github.io/pcclass/g4/L01/" },
+    { "id": "g4-L02", "category": "四上", "url": "https://boyinslps.github.io/pcclass/g4/L02/" }
   ]
 }
