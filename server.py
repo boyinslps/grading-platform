@@ -203,47 +203,45 @@ def _split_open(open_items, bonus_qids):
 
 
 def _ai_grade(open_items, rubric, questions, bonus_qids=None):
+    """開放題逐題各自打分（2026-09-16 教師指定）：主要開放題每題各評 0～ai_max
+    （同一份規準獨立套用在每一題上，group 總分＝各題平均，見《AI評分規範》§7）；
+    加分題每題各評 0～3，group 總分＝各題相加（維持既有的疊加式加分）。
+    沒作答的題目不送進 prompt（省 token，也不拖累相對比較），直接記 0 分。"""
     qmap = {q.get("qid"): q for q in (questions or [])}
     ai_max = _rubric_total(rubric)
     main_items, bonus_items = _split_open(open_items, bonus_qids)
     has_main, has_bonus = bool(main_items), bool(bonus_items)
-    main_blank = (not has_main) or all(_is_blank(v) for v in main_items.values())
-    bonus_blank = (not has_bonus) or all(_is_blank(v) for v in bonus_items.values())
-    # 全部（主要＋加分）都空白 → 不必呼叫 AI，直接 0 分（評分總則第 3 點）
-    if (not has_main or main_blank) and (not has_bonus or bonus_blank):
+    main_ask = {q: a for q, a in main_items.items() if not _is_blank(a)}
+    bonus_ask = {q: a for q, a in bonus_items.items() if not _is_blank(a)}
+    # 全部（主要＋加分）都空白 → 不必呼叫 AI，直接每題 0 分（評分總則第 3 點）
+    if not main_ask and not bonus_ask:
+        scores = {q: 0 for q in main_items} if has_main else None
+        bonus_scores = {q: 0 for q in bonus_items} if has_bonus else None
         return {"ok": True, "score": 0 if has_main else None, "bonusScore": 0 if has_bonus else None,
-                "feedback": "這次沒有作答，先把想法寫下來就有分數了。", "perItem": [], "aiMax": ai_max}
-    blocks = []
-    if has_main and not main_blank:
-        for qid, ans in main_items.items():
-            pq = (qmap.get(qid, {}) or {}).get("prompt", "")
-            blocks.append(f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}")
-    bonus_blocks = []
-    if has_bonus and not bonus_blank:
-        for qid, ans in bonus_items.items():
-            pq = (qmap.get(qid, {}) or {}).get("prompt", "")
-            bonus_blocks.append(f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}")
+                "scores": scores, "bonusScores": bonus_scores,
+                "feedback": "這次沒有作答，先把想法寫下來就有分數了。", "aiMax": ai_max}
+
+    def block_of(qid, ans):
+        pq = (qmap.get(qid, {}) or {}).get("prompt", "")
+        return f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}"
+
     schema_fields = []
-    if has_main and not main_blank:
-        schema_fields.append(f'"score":<0到{ai_max}整數,主要開放題總評分>')
-    if has_bonus and not bonus_blank:
-        schema_fields.append('"bonusScore":<0到3整數,加分題等級：0未達到/1簡短/2普通/3詳細>')
-    schema_fields.append('"feedback":"<給學生的兩三句中文回饋>"')
-    qid_note = _open_qid_note(main_items if (has_main and not main_blank) else {},
-                               bonus_items if (has_bonus and not bonus_blank) else {})
-    prompt = "你是國小資訊課的閱卷老師。請依下列總則與規準評分。\n\n" + master_rubric(ai_max) + "\n\n" + qid_note + _rubric_text(rubric, ai_max)
-    if blocks:
-        prompt += "\n\n【主要開放題】\n" + "\n\n".join(blocks)
-    if bonus_blocks:
+    if main_ask:
+        schema_fields.append('"scores":{' + ",".join(f'"{q}":<0到{ai_max}整數>' for q in main_ask) + '}')
+    if bonus_ask:
+        schema_fields.append('"bonusScores":{' + ",".join(f'"{q}":<0到3整數>' for q in bonus_ask) + '}')
+    schema_fields.append('"feedback":"<給學生的兩三句中文回饋，整體性的，不用逐題各寫一段>"')
+    qid_note = _open_qid_note(main_ask, bonus_ask)
+    prompt = "你是國小資訊課的閱卷老師。請依下列總則與規準，對每一題開放題各自獨立評分（不是全部加在一起給一個分數）。\n\n" + master_rubric(ai_max) + "\n\n" + qid_note + _rubric_text(rubric, ai_max)
+    if main_ask:
+        prompt += "\n\n【主要開放題，每題各自依規準給 0～%d 分】\n" % ai_max + "\n\n".join(block_of(q, a) for q, a in main_ask.items())
+    if bonus_ask:
         prompt += (
-            "\n\n【加分題，獨立於主要分數之外，額外加分用，不算進上面的評分規準】\n"
-            "依內容完整度給 0～3 分：完全沒寫或跟題目無關給 0，只有一兩句、籠統帶過給 1，"
-            "內容完整合理給 2，具體、有自己觀察或例子給 3。\n" + "\n\n".join(bonus_blocks)
+            "\n\n【加分題，獨立於主要分數之外，額外加分用，不算進上面的評分規準；每題各自依內容完整度給 0～3 分】\n"
+            "完全沒寫或跟題目無關給 0，只有一兩句、籠統帶過給 1，內容完整合理給 2，具體、有自己觀察或例子給 3。\n"
+            + "\n\n".join(block_of(q, a) for q, a in bonus_ask.items())
         )
-    prompt += (
-        '\n\n只輸出 JSON（無多餘文字、無程式碼圍欄）：{' + ",".join(schema_fields)
-        + ',"perItem":[{"qid":"..","score":<0到100>,"feedback":"<一句>"}]}'
-    )
+    prompt += '\n\n只輸出 JSON（無多餘文字、無程式碼圍欄）：{' + ",".join(schema_fields) + '}'
     r = grade_call(prompt)
     if not r.get("ok"):
         return {"ok": False, "error": r.get("error", "AI 呼叫失敗")}
@@ -254,27 +252,46 @@ def _ai_grade(open_items, rubric, questions, bonus_qids=None):
         d = json.loads(m.group(0))
     except Exception as e:
         return {"ok": False, "error": f"JSON 解析失敗：{e}"}
-    # 上限由伺服器強制夾住，不靠 AI 自律（評分總則第 1 點）；沒作答的那一組不論 AI 說什麼，一律覆蓋成 0
+    # 上限由伺服器強制夾住，不靠 AI 自律（評分總則第 1 點）；沒作答的題目不論 AI 說什麼，一律覆蓋成 0
     def clamp(v, hi):
         try:
             return max(0, min(hi, round(float(v))))
         except Exception:
             return None
-    per = []
-    for it in (d.get("perItem") or []):
-        if isinstance(it, dict):
-            per.append({"qid": it.get("qid"), "score": clamp(it.get("score"), 100),
-                        "feedback": it.get("feedback", "")})
-    score = (0 if main_blank else clamp(d.get("score"), ai_max)) if has_main else None
-    bonus_score = (0 if bonus_blank else clamp(d.get("bonusScore"), 3)) if has_bonus else None
-    return {"ok": True, "score": score, "bonusScore": bonus_score, "feedback": d.get("feedback", ""),
-            "perItem": per, "aiMax": ai_max}
+    d_scores = d.get("scores") if isinstance(d.get("scores"), dict) else {}
+    d_bonus = d.get("bonusScores") if isinstance(d.get("bonusScores"), dict) else {}
+    scores, bonus_scores = None, None
+    if has_main:
+        scores = {}
+        for q in main_items:
+            if q not in main_ask:
+                scores[q] = 0
+            else:
+                v = clamp(d_scores.get(q), ai_max)
+                if v is None:
+                    return {"ok": False, "error": f"AI 沒有給題號 {q} 合法的分數"}
+                scores[q] = v
+    if has_bonus:
+        bonus_scores = {}
+        for q in bonus_items:
+            if q not in bonus_ask:
+                bonus_scores[q] = 0
+            else:
+                v = clamp(d_bonus.get(q), 3)
+                bonus_scores[q] = v if v is not None else 0
+    score = round(sum(scores.values()) / len(scores)) if scores else None
+    bonus_score = sum(bonus_scores.values()) if bonus_scores is not None else None
+    return {"ok": True, "score": score, "bonusScore": bonus_score, "scores": scores, "bonusScores": bonus_scores,
+            "feedback": d.get("feedback", ""), "aiMax": ai_max}
 
 
 def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None):
     """整批（同一班）一次 AI 呼叫評完，不是逐筆呼叫 /api/grade。
     items: [{"key":<submission id>, "answers":{qid:text,...}}, ...]
-    回傳 {"ok":True,"results":{key:{"score":?,"bonusScore":?,"feedback":str}},"missing":[key,...]} 或 {"ok":False,"error":...}
+    回傳 {"ok":True,"results":{key:{"score":?,"bonusScore":?,"scores":{qid:分數},"bonusScores":{qid:分數},
+                                    "feedback":str}},"missing":[key,...]} 或 {"ok":False,"error":...}
+    開放題逐題各自打分（2026-09-16 教師指定，見 _ai_grade 同一套邏輯）：主要開放題每題各 0～ai_max，
+    group 總分＝各題平均；加分題每題各 0～3，group 總分＝各題相加（疊加式加分）。
     加分題（bonus_qids 標記的 qid）跟主要開放題一起送 AI，但分開算分、分開回傳（見《學習單資料與提交規範》§2-b）。
     """
     if not items:
@@ -284,24 +301,23 @@ def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None):
 
     def parts(it):
         main, bonus = _split_open(it.get("answers"), bonus_qids)
-        has_main, has_bonus = bool(main), bool(bonus)
-        main_blank = (not has_main) or all(_is_blank(v) for v in main.values())
-        bonus_blank = (not has_bonus) or all(_is_blank(v) for v in bonus.values())
-        return main, bonus, has_main, has_bonus, main_blank, bonus_blank
+        main_ask = {q: a for q, a in main.items() if not _is_blank(a)}
+        bonus_ask = {q: a for q, a in bonus.items() if not _is_blank(a)}
+        return main, bonus, main_ask, bonus_ask
 
-    # 完全沒作答（主要＋加分都空白）的先挑出來直接 0 分（評分總則第 3 點）：不送進 prompt，省 token，
+    # 完全沒作答（主要＋加分都空白）的先挑出來直接每題 0 分（評分總則第 3 點）：不送進 prompt，省 token，
     # 也不會讓一堆空白作答拉低 AI 對「這批平均水準」的判斷（第 2 點的相對比較只看有寫的人）。
     results, graded = {}, []
     for it in items:
-        main, bonus, has_main, has_bonus, main_blank, bonus_blank = parts(it)
-        if (not has_main or main_blank) and (not has_bonus or bonus_blank):
+        main, bonus, main_ask, bonus_ask = parts(it)
+        if not main_ask and not bonus_ask:
             entry = {}
-            if has_main: entry["score"] = 0
-            if has_bonus: entry["bonusScore"] = 0
+            if main: entry["score"] = 0; entry["scores"] = {q: 0 for q in main}
+            if bonus: entry["bonusScore"] = 0; entry["bonusScores"] = {q: 0 for q in bonus}
             if want_feedback: entry["feedback"] = "這次沒有作答，先把想法寫下來就有分數了。"
             results[it["key"]] = entry
         else:
-            graded.append((it, main, bonus, has_main, has_bonus, main_blank, bonus_blank))
+            graded.append((it, main, bonus, main_ask, bonus_ask))
     if not graded:
         return {"ok": True, "results": results, "missing": [], "aiMax": ai_max}
     # 用短代號（k0、k1…）當 JSON 鍵，不直接把 Firestore doc id 塞進 prompt——
@@ -310,42 +326,40 @@ def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None):
     # 整批共用一份規準，所以在規準前面列的是這份學習單這批人「出現過」的開放題／加分題編號聯集，
     # 不是逐生列（逐生的 qid 已經在各自的【kN】區塊裡標了）。
     all_main_qids, all_bonus_qids = {}, {}
-    for (it, main, bonus, has_main, has_bonus, main_blank, bonus_blank) in graded:
-        if has_main and not main_blank:
-            for q in main.keys():
-                all_main_qids.setdefault(q, True)
-        if has_bonus and not bonus_blank:
-            for q in bonus.keys():
-                all_bonus_qids.setdefault(q, True)
+    for (it, main, bonus, main_ask, bonus_ask) in graded:
+        for q in main_ask: all_main_qids.setdefault(q, True)
+        for q in bonus_ask: all_bonus_qids.setdefault(q, True)
     qid_note = _open_qid_note(all_main_qids, all_bonus_qids)
     blocks = []
     any_bonus_asked = False
-    for alias, (it, main, bonus, has_main, has_bonus, main_blank, bonus_blank) in zip(aliases, graded):
+    for alias, (it, main, bonus, main_ask, bonus_ask) in zip(aliases, graded):
         lines = [f"【{alias}】"]
-        if has_main and not main_blank:
-            lines.append("主要開放題：")
-            for qid, ans in main.items():
+        if main_ask:
+            lines.append("主要開放題（每題各自依規準給 0～%d 分）：" % ai_max)
+            for qid, ans in main_ask.items():
                 pq = (qmap.get(qid, {}) or {}).get("prompt", "")
                 lines.append(f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}")
-        if has_bonus and not bonus_blank:
+        if bonus_ask:
             any_bonus_asked = True
-            lines.append("加分題（獨立於主要分數之外）：")
-            for qid, ans in bonus.items():
+            lines.append("加分題（獨立於主要分數之外，每題各自給 0～3 分）：")
+            for qid, ans in bonus_ask.items():
                 pq = (qmap.get(qid, {}) or {}).get("prompt", "")
                 lines.append(f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}")
         blocks.append("\n".join(lines))
-    feedback_field = ',"feedback":"<給這位學生的兩三句中文回饋>"' if want_feedback else ""
-    bonus_field = ',"bonusScore":<0到3整數，加分題等級；這位沒有加分題作答就不用給>' if any_bonus_asked else ""
-    schema = "{" + f'"{aliases[0]}":{{"score":<0到{ai_max}整數，沒有主要開放題作答就不用給>{bonus_field}{feedback_field}}}' + ",...}"
+    feedback_field = ',"feedback":"<給這位學生的兩三句中文回饋，整體性的>"' if want_feedback else ""
+    bonus_field = ',"bonusScores":{"<qid>":<0到3整數,該生每個有作答的加分題各一個>}' if any_bonus_asked else ""
+    schema = ("{" + f'"{aliases[0]}":{{"scores":{{"<qid>":<0到{ai_max}整數,該生每個有作答的主要開放題各一個}}}}'
+              f'{bonus_field}{feedback_field}}}' + ",...}")
     prompt = (
-        "你是國小資訊課的閱卷老師。以下是同一個班級、同一份學習單裡多位學生的開放題作答，請依下列總則與規準逐一評分。\n"
+        "你是國小資訊課的閱卷老師。以下是同一個班級、同一份學習單裡多位學生的開放題作答，請依下列總則與規準逐一評分，"
+        "且對每一題開放題各自獨立評分（不是把一位學生的所有題目加在一起給一個分數）。\n"
         "每位學生的作答可能分成「主要開放題」與「加分題」：主要開放題依評分規準評分；"
         "加分題獨立於主要分數之外，依內容完整度給 0～3 分（完全沒寫或跟題目無關 0 分，"
         "只有一兩句、籠統帶過 1 分，內容完整合理 2 分，具體、有自己觀察或例子 3 分）。\n\n"
         + master_rubric(ai_max) + "\n\n" + qid_note
         + _rubric_text(rubric, ai_max) + "\n\n" + "\n\n".join(blocks) +
         "\n\n只輸出一個 JSON 物件（無多餘文字、無程式碼圍欄），"
-        f"每位學生都要用【】裡的代號當鍵名、一個不漏，格式例如：{schema}"
+        f"每位學生都要用【】裡的代號當鍵名、一個不漏，鍵名要用學生上面實際列出的 qid，格式例如：{schema}"
     )
     r = grade_call(prompt)
     if not r.get("ok"):
@@ -367,19 +381,34 @@ def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None):
             return None
 
     missing = []
-    for alias, (it, main, bonus, has_main, has_bonus, main_blank, bonus_blank) in zip(aliases, graded):
+    for alias, (it, main, bonus, main_ask, bonus_ask) in zip(aliases, graded):
         entry = parsed.get(alias)
         if not isinstance(entry, dict):
             missing.append(it["key"]); continue
         out = {}
-        if has_main:
-            sc = 0 if main_blank else clamp(entry.get("score"), ai_max)
-            if sc is None:
+        entry_scores = entry.get("scores") if isinstance(entry.get("scores"), dict) else {}
+        entry_bonus = entry.get("bonusScores") if isinstance(entry.get("bonusScores"), dict) else {}
+        if main:
+            scores = {}
+            ok = True
+            for q in main:
+                if q not in main_ask:
+                    scores[q] = 0
+                else:
+                    v = clamp(entry_scores.get(q), ai_max)
+                    if v is None: ok = False; break
+                    scores[q] = v
+            if not ok:
                 missing.append(it["key"]); continue
-            out["score"] = sc
-        if has_bonus:
-            bs = 0 if bonus_blank else clamp(entry.get("bonusScore"), 3)
-            out["bonusScore"] = bs if bs is not None else 0
+            out["scores"] = scores
+            out["score"] = round(sum(scores.values()) / len(scores))
+        if bonus:
+            bonus_scores = {}
+            for q in bonus:
+                v = 0 if q not in bonus_ask else clamp(entry_bonus.get(q), 3)
+                bonus_scores[q] = v if v is not None else 0
+            out["bonusScores"] = bonus_scores
+            out["bonusScore"] = sum(bonus_scores.values())
         if want_feedback:
             out["feedback"] = entry.get("feedback") or ""
         results[it["key"]] = out
@@ -427,20 +456,20 @@ def grade_submission(payload):
     auto_score = round(auto_ok / auto_total * 100) if auto_total else None
     open_items = {q: v for q, v in answers.items() if q not in answer_key}
     ai_score, ai_bonus_score, ai_feedback, ai_max = None, None, "", _rubric_total(rubric)
+    ai_scores, ai_bonus_scores = None, None
     if open_items:
         ai = _ai_grade(open_items, rubric, questions, bonus_qids)
         if ai.get("ok"):
             ai_score = ai.get("score")
             ai_bonus_score = ai.get("bonusScore")
+            ai_scores = ai.get("scores")
+            ai_bonus_scores = ai.get("bonusScores")
             ai_max = ai.get("aiMax", ai_max)
             ai_feedback = ai.get("feedback", "")
-            for it in (ai.get("perItem") or []):
-                it["type"] = "open"
-                per_item.append(it)
         else:
             ai_feedback = "AI 評分失敗：" + ai.get("error", "")
     return {"ok": True, "autoScore": auto_score, "aiScore": ai_score,
-            "bonusScore": ai_bonus_score, "aiMax": ai_max,
+            "bonusScore": ai_bonus_score, "scores": ai_scores, "bonusScores": ai_bonus_scores, "aiMax": ai_max,
             "aiFeedback": ai_feedback, "perItem": per_item,
             "autoCorrect": auto_ok, "autoTotal": auto_total}
 
