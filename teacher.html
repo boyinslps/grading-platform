@@ -125,6 +125,7 @@
           <button class="btn" id="editRoster" disabled>編輯名單</button>
           <button class="btn" id="liveSubBtn">🟢 即時繳交</button>
           <button class="btn" id="wsSettings" disabled>學習單設定</button>
+          <button class="btn" id="refreshSubs" disabled title="重新向資料庫抓一次目前這份學習單的繳交資料">🔄 重新整理</button>
           <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);padding:0 2px" title="勾選才會呼叫 AI 評開放題（並附一句評語）；不勾就只算計分/體驗題，開放題留給老師手動評"><input type="checkbox" id="aiEnableChk" checked style="margin:0">啟用AI</label>
           <button class="btn" id="aiGrade" disabled>批次評分</button>
           <button class="btn" id="exportGrades" disabled>匯出成績</button>
@@ -550,21 +551,35 @@ function fetchWsTitle(id,url,el){
 function selectWs(id,w){
   curWs=id; curWsCfg={title:(w&&w.title)||id,category:(w&&w.category)||'',url:(w&&w.url)||'',answerKey:(w&&w.answerKey)||null,rubric:(w&&w.rubric)||null,questions:(w&&w.questions)||null,scoring:(w&&w.scoring)||null};
   $('#settingsPanel').hidden=true;
-  ['wsSettings','aiGrade','exportGrades','pushClassroom'].forEach(function(x){$('#'+x).disabled=false;});
+  ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs'].forEach(function(x){$('#'+x).disabled=false;});
   db.collection('worksheets').doc(id).get().then(function(d){
     if(d.exists){var c=d.data();curWsCfg.title=c.title||curWsCfg.title;curWsCfg.category=c.category||curWsCfg.category;curWsCfg.url=c.url||curWsCfg.url;curWsCfg.answerKey=c.answerKey||curWsCfg.answerKey;curWsCfg.rubric=c.rubric||curWsCfg.rubric;curWsCfg.questions=c.questions||curWsCfg.questions;curWsCfg.scoring=c.scoring||curWsCfg.scoring;}
     $('#wsMeta').textContent='學習單：'+curWsCfg.title+'　·　ID：'+id+(curWsCfg.category?' · '+curWsCfg.category:'')+(curWsCfg.scoring?' · 自訂分數計算':' · 分數計算：預設')+(curWsCfg.rubric?' · 有評分規準':'');
   }).catch(function(){$('#wsMeta').textContent='學習單：'+id;});
   loadSubs(id);
 }
-function loadSubs(id){
+function loadSubs(id,forceServer){
   var rows=$('#rows');rows.innerHTML='<tr><td colspan="8"><div class="empty">載入繳交資料…</div></td></tr>';
-  db.collection('submissions').where('worksheetId','==',id).get().then(function(qs){
+  var opts=forceServer?{source:'server'}:undefined;
+  return db.collection('submissions').where('worksheetId','==',id).get(opts).then(function(qs){
     subsCache=[];qs.forEach(function(d){subsCache.push(Object.assign({_id:d.id},d.data()))});
     subsCache.sort(function(a,b){return wkSortKey(a)-wkSortKey(b)});
     renderSubs();
-  }).catch(function(e){rows.innerHTML='<tr><td colspan="8"><div class="empty">讀取失敗：'+e.message+'</div></td></tr>';});
+  }).catch(function(e){rows.innerHTML='<tr><td colspan="8"><div class="empty">讀取失敗：'+e.message+'</div></td></tr>';throw e;});
 }
+// 重新整理：強制向 Firestore 伺服器重新抓一次目前這份學習單的繳交資料（不是讀本機快取），
+// 用於老師知道學生剛送出、但畫面（例如 onSnapshot 還沒觸發或這台裝置離線過）還沒反映最新狀態時手動催一次。
+$('#refreshSubs').addEventListener('click',function(){
+  if(!curWs)return;
+  var btn=this,orig=btn.textContent;
+  btn.disabled=true;btn.textContent='重新整理中…';
+  loadSubs(curWs,true).then(function(){
+    btn.textContent='✓ 已更新';
+    setTimeout(function(){btn.disabled=false;btn.textContent=orig;},900);
+  }).catch(function(){
+    btn.disabled=false;btn.textContent=orig;
+  });
+});
 function fmtTime(ts){try{var d=ts&&ts.toDate?ts.toDate():new Date(ts);return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}catch(e){return '—'}}
 // 學生識別（年級/班級/學號；見《學習單資料與提交規範》）；舊式（座號/姓名）留作相容顯示
 function wkLabel(s){
@@ -1131,7 +1146,7 @@ $('#wsDelete').addEventListener('click',function(){
     $('#settingsPanel').hidden=true;
     curWs=null;curWsCfg={};
     $('#wsSelect').value='';
-    ['wsSettings','aiGrade','exportGrades','pushClassroom'].forEach(function(x){$('#'+x).disabled=true;});
+    ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs'].forEach(function(x){$('#'+x).disabled=true;});
     $('#wsMeta').textContent=curCourse?'請從右上角下拉選單選一份學習單。':'從左側選一個班級。';
     $('#stSub').textContent='—';$('#stGraded').textContent='—';$('#stPending').textContent='—';$('#stAvg').textContent='—';
     $('#rows').innerHTML='<tr><td colspan="8"><div class="empty"><div class="t">尚未選擇學習單</div>從右上角下拉選單選一份學習單。</div></td></tr>';
