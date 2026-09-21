@@ -1,6 +1,9 @@
 # 本專案獨立運作後，config.json 會存 Google OAuth client_secret／AI API Key，絕不可上傳
 config.json
 
+# 隨附的可攜式 Python（USB／換電腦時用檔案複製帶走，不必進 git）
+runtime/
+
 # 系統/暫存
 .DS_Store
 Thumbs.db
@@ -9,3 +12,20 @@ __pycache__/
 *.pyc
 .vscode/
 .idea/
+
+# 課表（這台電腦的排課，不含金鑰但屬個別教師的本機資料）
+timetable.json
+
+# 學生資料一律不進 git：正本只存在 Firestore，本機端不論是匯出、備份還是暫存產物都不留。
+# （目前 server.py 只會寫 config.json／timetable.json 兩個檔，以下是防呆，擋住日後新增的匯出功能誤commit。）
+*.csv
+*.xlsx
+*.bak
+students*.json
+roster*.json
+grades*.json
+scores*.json
+submissions*.json
+名單*
+成績*
+繳交*

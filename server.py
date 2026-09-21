@@ -10,6 +10,8 @@ import json, re, io, base64, zipfile, mimetypes, urllib.request, urllib.parse, t
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import updater   # 自動更新（見 updater.py／《自動更新規範》）
+
 HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "config.json"
 PORT = 8780
@@ -33,6 +35,86 @@ def read_config():
 def save_config(cfg):
     CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
 
+
+# ========== 課表（存本資料夾的 timetable.json，跟含金鑰的 config.json 分開）==========
+TIMETABLE = HERE / "timetable.json"
+DEFAULT_PERIODS = [
+    {"no": 1, "start": "08:45", "end": "09:25"},
+    {"no": 2, "start": "09:35", "end": "10:15"},
+    {"no": 3, "start": "10:30", "end": "11:10"},
+    {"no": 4, "start": "11:20", "end": "12:00"},
+    {"no": 5, "start": "13:40", "end": "14:20"},
+    {"no": 6, "start": "14:30", "end": "15:10"},
+    {"no": 7, "start": "15:20", "end": "16:00"},
+]
+_SLOT_KEY = re.compile(r"^[1-7]-([1-9]|1[0-2])$")
+
+
+def _hhmm(v):
+    """正規化成 HH:MM；「9:30」這種單位數小時補成「09:30」（否則字串比大小會錯），格式不對回空字串。"""
+    t = str(v or "").strip()
+    m = re.match(r"^(\d{1,2}):(\d{2})$", t)
+    if not m:
+        return ""
+    h, mi = int(m.group(1)), int(m.group(2))
+    if h > 23 or mi > 59:
+        return ""
+    return f"{h:02d}:{mi:02d}"
+
+
+def _clean_periods(arr):
+    """只留形狀正確的節次（no 1–12、start/end 是 HH:MM），壞掉的整筆丟掉而不是塞預設值——
+    課表是老師自己填的，靜靜補一個假時間會讓「現在第幾節」算錯，不如讓那節消失看得出來。"""
+    out = []
+    for it in (arr or []):
+        if not isinstance(it, dict):
+            continue
+        try:
+            no = int(it.get("no"))
+        except Exception:
+            continue
+        st, en = _hhmm(it.get("start")), _hhmm(it.get("end"))
+        if not (1 <= no <= 12) or not st or not en or en <= st:
+            continue
+        out.append({"no": no, "start": st, "end": en})
+    out.sort(key=lambda x: x["no"])
+    seen, uniq = set(), []
+    for it in out:
+        if it["no"] in seen:
+            continue
+        seen.add(it["no"]); uniq.append(it)
+    return uniq
+
+
+def read_timetable():
+    """{periods:[{no,start,end}], slots:{"{星期1-5}-{節次}": 班級id}, currentWs:{班級id: 學習單id}, updatedAt}"""
+    data = {}
+    if TIMETABLE.exists():
+        try:
+            data = json.loads(TIMETABLE.read_text("utf-8"))
+        except Exception:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    periods = _clean_periods(data.get("periods")) or [dict(x) for x in DEFAULT_PERIODS]
+    slots = {k: str(v) for k, v in (data.get("slots") or {}).items()
+             if _SLOT_KEY.match(str(k)) and str(v or "").strip()}
+    cur = {str(k): str(v) for k, v in (data.get("currentWs") or {}).items() if str(v or "").strip()}
+    return {"periods": periods, "slots": slots, "currentWs": cur,
+            "updatedAt": data.get("updatedAt") or 0}
+
+
+def save_timetable(data):
+    tt = {
+        "periods": _clean_periods((data or {}).get("periods")) or [dict(x) for x in DEFAULT_PERIODS],
+        "slots": {str(k): str(v) for k, v in ((data or {}).get("slots") or {}).items()
+                  if _SLOT_KEY.match(str(k)) and str(v or "").strip()},
+        "currentWs": {str(k): str(v) for k, v in ((data or {}).get("currentWs") or {}).items()
+                      if str(v or "").strip()},
+        "updatedAt": time.time(),
+    }
+    TIMETABLE.write_text(json.dumps(tt, ensure_ascii=False, indent=2), "utf-8")
+    return {"ok": True, "timetable": tt}
 
 # ========== AI 評分（openai 相容聊天補全；見《AI串接窗口設定規範》）==========
 def _bad_header_chars(*vals):
@@ -202,7 +284,7 @@ def _split_open(open_items, bonus_qids):
     return main, bonus
 
 
-def _ai_grade(open_items, rubric, questions, bonus_qids=None):
+def _ai_grade(open_items, rubric, questions, bonus_qids=None, overview=None):
     """開放題逐題各自打分（2026-09-16 教師指定）：主要開放題每題各評 0～ai_max
     （同一份規準獨立套用在每一題上，group 總分＝各題平均，見《AI評分規範》§7）；
     加分題每題各評 0～3，group 總分＝各題相加（維持既有的疊加式加分）。
@@ -232,7 +314,8 @@ def _ai_grade(open_items, rubric, questions, bonus_qids=None):
         schema_fields.append('"bonusScores":{' + ",".join(f'"{q}":<0到3整數>' for q in bonus_ask) + '}')
     schema_fields.append('"feedback":"<給學生的兩三句中文回饋，整體性的，不用逐題各寫一段>"')
     qid_note = _open_qid_note(main_ask, bonus_ask)
-    prompt = "你是國小資訊課的閱卷老師。請依下列總則與規準，對每一題開放題各自獨立評分（不是全部加在一起給一個分數）。\n\n" + master_rubric(ai_max) + "\n\n" + qid_note + _rubric_text(rubric, ai_max)
+    overview_block = (str(overview).strip() + "\n\n") if overview and str(overview).strip() else ""
+    prompt = "你是國小資訊課的閱卷老師。請依下列總則與規準，對每一題開放題各自獨立評分（不是全部加在一起給一個分數）。\n\n" + overview_block + master_rubric(ai_max) + "\n\n" + qid_note + _rubric_text(rubric, ai_max)
     if main_ask:
         prompt += "\n\n【主要開放題，每題各自依規準給 0～%d 分】\n" % ai_max + "\n\n".join(block_of(q, a) for q, a in main_ask.items())
     if bonus_ask:
@@ -285,7 +368,7 @@ def _ai_grade(open_items, rubric, questions, bonus_qids=None):
             "feedback": d.get("feedback", ""), "aiMax": ai_max}
 
 
-def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None):
+def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None, overview=None):
     """整批（同一班）一次 AI 呼叫評完，不是逐筆呼叫 /api/grade。
     items: [{"key":<submission id>, "answers":{qid:text,...}}, ...]
     回傳 {"ok":True,"results":{key:{"score":?,"bonusScore":?,"scores":{qid:分數},"bonusScores":{qid:分數},
@@ -350,13 +433,14 @@ def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None):
     bonus_field = ',"bonusScores":{"<qid>":<0到3整數,該生每個有作答的加分題各一個>}' if any_bonus_asked else ""
     schema = ("{" + f'"{aliases[0]}":{{"scores":{{"<qid>":<0到{ai_max}整數,該生每個有作答的主要開放題各一個}}}}'
               f'{bonus_field}{feedback_field}}}' + ",...}")
+    overview_block = (str(overview).strip() + "\n\n") if overview and str(overview).strip() else ""
     prompt = (
         "你是國小資訊課的閱卷老師。以下是同一個班級、同一份學習單裡多位學生的開放題作答，請依下列總則與規準逐一評分，"
         "且對每一題開放題各自獨立評分（不是把一位學生的所有題目加在一起給一個分數）。\n"
         "每位學生的作答可能分成「主要開放題」與「加分題」：主要開放題依評分規準評分；"
         "加分題獨立於主要分數之外，依內容完整度給 0～3 分（完全沒寫或跟題目無關 0 分，"
         "只有一兩句、籠統帶過 1 分，內容完整合理 2 分，具體、有自己觀察或例子 3 分）。\n\n"
-        + master_rubric(ai_max) + "\n\n" + qid_note
+        + overview_block + master_rubric(ai_max) + "\n\n" + qid_note
         + _rubric_text(rubric, ai_max) + "\n\n" + "\n\n".join(blocks) +
         "\n\n只輸出一個 JSON 物件（無多餘文字、無程式碼圍欄），"
         f"每位學生都要用【】裡的代號當鍵名、一個不漏，鍵名要用學生上面實際列出的 qid，格式例如：{schema}"
@@ -423,11 +507,12 @@ def grade_batch(payload):
     questions = payload.get("questions") or []
     bonus_qids = payload.get("bonusQids") or []
     want_feedback = bool(payload.get("wantFeedback"))
+    overview = payload.get("overview")
     CHUNK = 40
     all_results, all_missing, errors = {}, [], []
     for i in range(0, len(items), CHUNK):
         chunk = items[i:i + CHUNK]
-        r = _ai_grade_batch(chunk, rubric, questions, want_feedback, bonus_qids)
+        r = _ai_grade_batch(chunk, rubric, questions, want_feedback, bonus_qids, overview)
         if not r.get("ok"):
             errors.append(r.get("error", "AI 呼叫失敗"))
             all_missing.extend(it["key"] for it in chunk)
@@ -445,6 +530,7 @@ def grade_submission(payload):
     rubric = payload.get("rubric")
     questions = payload.get("questions") or []
     bonus_qids = payload.get("bonusQids") or []
+    overview = payload.get("overview")
     per_item, auto_ok, auto_total = [], 0, 0
     for qid, correct in answer_key.items():
         got = answers.get(qid)
@@ -458,7 +544,7 @@ def grade_submission(payload):
     ai_score, ai_bonus_score, ai_feedback, ai_max = None, None, "", _rubric_total(rubric)
     ai_scores, ai_bonus_scores = None, None
     if open_items:
-        ai = _ai_grade(open_items, rubric, questions, bonus_qids)
+        ai = _ai_grade(open_items, rubric, questions, bonus_qids, overview)
         if ai.get("ok"):
             ai_score = ai.get("score")
             ai_bonus_score = ai.get("bonusScore")
@@ -718,6 +804,10 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, classroom_students(q.get("courseId", [""])[0]))
             if u.path == "/api/diagnostics":
                 return self._send(200, diagnostics())
+            if u.path == "/api/timetable":
+                return self._send(200, {"ok": True, "timetable": read_timetable()})
+            if u.path == "/api/update/check":
+                return self._send(200, updater.check_update(HERE))
             if u.path == "/oauth/callback":
                 code = q.get("code", [""])[0]; err = q.get("error", [""])[0]
                 if err:
@@ -743,6 +833,8 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             data = {}
         try:
+            if u.path == "/api/update/apply":
+                return self._send(200, updater.apply_update(HERE))
             if u.path == "/api/settings":
                 cfg = read_config()
                 # 密鑰欄位「留空＝不變更」：避免前端欄位還沒載入就按下按鈕，把已存的金鑰洗掉。
@@ -755,6 +847,8 @@ class H(BaseHTTPRequestHandler):
                     cfg[k] = v
                 save_config(cfg)
                 return self._send(200, {"ok": True})
+            if u.path == "/api/timetable":
+                return self._send(200, save_timetable(data))
             if u.path == "/api/grade":
                 return self._send(200, grade_submission(data))
             if u.path == "/api/grade-batch":

@@ -94,10 +94,67 @@
   .tab-sub .tab-btn{font-size:12px;font-weight:600;color:var(--muted);background:var(--surface);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;cursor:pointer}
   .tab-sub .tab-btn:hover{background:var(--surface2)}
   .tab-sub .tab-btn.on{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent-ink)}
+  .ttTable{width:100%;min-width:640px;border-collapse:collapse;font-size:12px;table-layout:fixed}
+  .ttTable th,.ttTable td{border:1px solid var(--line);padding:4px}
+  .ttTable th{background:var(--surface2);font-weight:600;color:var(--muted)}
+  .ttTable select,.ttTable input{width:100%;font-size:12px;padding:5px 4px;border:1px solid var(--line2);border-radius:6px;background:var(--surface);color:var(--ink);outline:none;box-sizing:border-box}
+  .ttPeriodCell{text-align:left}
+  .ttPeriodCell .row{display:flex;gap:4px;align-items:center;margin-top:3px}
+  .ttPeriodCell input{font-size:11px;padding:4px 3px;text-align:center}
+  .ttPeriodCell .tt-pdel{width:auto;padding:2px 7px;font-size:11px;white-space:nowrap}
+  .chip{font-size:12px;font-weight:600;border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:999px;padding:5px 11px;cursor:pointer}
+  .chip:hover{background:var(--surface2)}
+  .chip.on{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent-ink)}
   @media(max-width:820px){.work{grid-template-columns:1fr}.side{border-right:none;border-bottom:1px solid var(--line)}}
 </style>
 </head>
 <body>
+<!-- 自動更新提示（見《引導規範/自動更新規範.md》）：只有真的落後新版時才會出現；教師端一律無 emoji -->
+<div id="updBar" style="display:none;background:#1e293b;color:#f8fafc;padding:10px 16px;font-size:14px">
+  <div style="max-width:1200px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <b id="updMsg" style="flex:1;min-width:220px"></b>
+    <button id="updLog" type="button">更新內容</button>
+    <button id="updGo" type="button">立即更新</button>
+    <button id="updLater" type="button">稍後</button>
+  </div>
+  <div id="updDetail" style="display:none;max-width:1200px;margin:8px auto 0;background:rgba(255,255,255,.1);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.8;max-height:200px;overflow:auto"></div>
+</div>
+<script>
+(function(){
+  var bar=document.getElementById('updBar');
+  var SKIP='gp_updateDismissed';
+  ['updLog','updGo','updLater'].forEach(function(id){
+    document.getElementById(id).style.cssText='border:0;border-radius:6px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;'
+      +(id==='updGo'?'background:#2563eb;color:#fff':'background:rgba(255,255,255,.16);color:#f8fafc');
+  });
+  document.getElementById('updLog').onclick=function(){
+    var el=document.getElementById('updDetail');
+    el.style.display=el.style.display==='none'?'block':'none';
+  };
+  document.getElementById('updLater').onclick=function(){
+    try{sessionStorage.setItem(SKIP,'1');}catch(e){}
+    bar.style.display='none';
+  };
+  document.getElementById('updGo').onclick=function(){
+    var go=this;go.disabled=true;go.textContent='更新中…';
+    fetch('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(function(r){return r.json();}).then(function(r){
+        if(!r.ok){go.disabled=false;go.textContent='立即更新';alert('更新失敗：\n'+(r.error||'未知錯誤'));return;}
+        document.getElementById('updMsg').textContent='已更新到 '+(r.version||'最新版')+'，請關掉這個視窗，重新執行「啟動評分平台」。';
+        ['updLog','updGo','updLater'].forEach(function(id){document.getElementById(id).style.display='none';});
+      }).catch(function(e){go.disabled=false;go.textContent='立即更新';alert('更新失敗：'+e.message);});
+  };
+  try{if(sessionStorage.getItem(SKIP)==='1')return;}catch(e){}
+  fetch('/api/update/check').then(function(r){return r.json();}).then(function(d){
+    if(!(d&&d.ok&&d.isGit&&d.behind>0))return;
+    document.getElementById('updMsg').textContent='有新版本可以更新：'+(d.currentVersion||'?')+' → '+(d.latestVersion||'?')+'（'+d.behind+' 個更新）';
+    document.getElementById('updDetail').innerHTML=(d.changes||[]).map(function(c){
+      return '<div>· '+c.date+'　'+String(c.msg).replace(/[&<>]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[m]})+'</div>';
+    }).join('')||'<div>（沒有取到更新說明）</div>';
+    bar.style.display='block';
+  }).catch(function(){});   // 檢查更新失敗不該影響正常使用，靜默略過
+})();
+</script>
 <div class="app">
   <header class="topbar">
     <div class="logo">評</div>
@@ -105,6 +162,7 @@
     <div style="flex:1"></div>
     <span id="who" class="note" style="margin:0"></span>
     <button class="btn" id="themeToggle">深色模式</button>
+    <button class="btn" id="ttBtn" hidden>課表</button>
     <button class="btn" id="aiBtn" hidden>設定</button>
     <button class="btn" id="reloadBtn">重新整理</button>
     <button class="btn" id="logoutBtn" hidden>登出</button>
@@ -145,6 +203,11 @@
           <div style="flex:2;min-width:160px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">標題</label><input id="setTitle" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px;outline:none"></div>
           <div style="flex:1;min-width:120px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">分類</label><select id="setCat" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"><option value="">未分類</option><option>四上</option><option>四下</option><option>五上</option><option>五下</option></select></div>
         </div>
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">這份學習單在教什麼（一句話概要，AI 評開放題前會先看到）</label>
+          <input id="setSummary" placeholder="例：分辨社群貼文裡的事實與意見敘述" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px;outline:none">
+          <div class="note" style="margin-top:4px">AI 評分開放題前，會先看到「這份學習單在教什麼＋全部題目的題號/題型/正解」，才不會只看到單一開放題就沒頭沒尾地打分（見《學習單資料與提交規範》規劃中章節）。這裡留空不影響評分，只是 AI 會少一點背景。</div>
+        </div>
         <div id="wsAdminBox" style="margin-bottom:14px"></div>
         <div id="scoringBox" style="margin-bottom:16px">
           <div style="font-size:13px;font-weight:700;margin-bottom:4px">分數計算</div>
@@ -157,6 +220,13 @@
           <div id="scItemsBox"></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap">
+          <b style="font-size:13px">開放題題幹（AI 評分時看到的題目文字）</b>
+          <button class="btn" id="addQuestion" style="padding:4px 10px">新增題目</button>
+        </div>
+        <div class="note" style="margin-bottom:8px">只有標成「開放」的題目需要在這裡補上題幹，AI 評分時才知道這題在問什麼；題號要跟學習單裡的 qid 一致（例如 q1、v3、c7）。沒有開放題的學習單可以留空。</div>
+        <div id="questionsBox"></div>
+        <div class="note" id="questionsHint" style="margin-top:2px;margin-bottom:16px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap">
           <b style="font-size:13px">評分規準（開放題用）</b>
           <div style="display:flex;gap:8px">
             <button class="btn" id="masterRubricBtn" style="padding:4px 10px">📋 評分總則</button>
@@ -166,6 +236,22 @@
         <div id="rubricBox"></div>
         <div class="note" id="rubricTotalNote" style="margin-top:6px"></div>
         <div class="note" id="settingsNote"></div>
+      </div>
+
+      <!-- 現在這節：依課表＋當下星期/時間推出來。「上課」＝切到該班級與本週學習單＋開學習單 Admin＋開即時繳交視窗 -->
+      <div class="card" id="nowCard" hidden style="margin-bottom:18px;padding:14px 18px">
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <div style="flex:1;min-width:230px">
+            <div style="font-size:12px;color:var(--muted)" id="nowWhen">—</div>
+            <div style="font-size:19px;font-weight:700;margin:3px 0 4px" id="nowClass">—</div>
+            <div class="note" id="nowWs" style="margin:0"></div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="nowWsSel" style="font-size:13px;font-weight:600;border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:8px;padding:7px 11px;max-width:230px"><option value="">本週學習單…</option></select>
+            <button class="btn btn-primary" id="startClassBtn">上課</button>
+          </div>
+        </div>
+        <div id="todayRow" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px"></div>
       </div>
 
       <div class="tiles">
@@ -223,6 +309,68 @@
       </div>
     </div>
     <div class="note" id="mrNote"></div>
+  </div>
+</div>
+
+<!-- 課表 -->
+<div class="gate off" id="ttModal">
+  <div class="panel" style="width:min(980px,100%);max-height:90vh;overflow:auto">
+    <h2>課表</h2>
+    <p>課表存在這台電腦的 <code style="font-size:11px">timetable.json</code>（不進 Firestore、不含任何學生資料）。設定好之後，主畫面上方會依當下星期與時間顯示「現在這節」，按「上課」就自動切到該班級、開學習單 Admin 與即時繳交視窗。</p>
+
+    <div class="tabbar" id="ttTabbar">
+      <button class="tab-btn on" data-tab="grid">課表格子</button>
+      <button class="tab-btn" data-tab="week">本週學習單</button>
+    </div>
+
+    <div data-ttpage="grid">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <p class="note" style="margin:0">每格選一個班級，空白＝這節沒課；每節左邊可直接改上課／下課時間。班級來自已匯入名單的 <code style="font-size:11px">courses</code>；還沒有的班級請先到「設定 → 名單匯入」建立。</p>
+        <button class="btn" id="ttImportToggle" style="white-space:nowrap">📋 貼上匯入</button>
+      </div>
+
+      <div id="ttImportBox" hidden style="border:1px solid var(--line2);border-radius:10px;padding:12px;margin-bottom:14px;background:var(--surface2)">
+        <p class="note" style="margin:0 0 8px">貼上課表文字，一行一節課，順序不拘，接受下面幾種寫法（可以混用）：<br>
+          <code style="font-size:11px">一 09:35-10:15 2 401</code>（星期 上課-下課 節次 班級——課表照片轉文字最推薦這種，見下方提示詞）<br>
+          <code style="font-size:11px">一 3 五年2班</code>　<code style="font-size:11px">週二 第5節 406</code>　<code style="font-size:11px">3,1,502</code>（沒有時間，只有節次編號）<br>
+          星期接受 一～五／1～5／週一／星期一；節次接受 3／第3節；時間要 24 小時制 HH:MM，分隔用 - ～ 至 到 都可以；班級接受 五年2班／502／5-2／g5-c2。
+          帶時間的那一節會直接把上課/下課時間一起填進課表格子（同節次重複貼會覆蓋成最後一次的時間）。</p>
+
+        <details style="margin:0 0 10px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--accent-ink);font-weight:600">📷 課表照片怎麼轉成文字？點這裡看提示詞</summary>
+          <div style="margin-top:8px">
+            <p class="note" style="margin:0 0 6px">把課表照片丟給任何看得懂圖片的 AI（例如 ChatGPT、Gemini、Claude 的網頁版，上傳照片＋貼這段提示詞），
+              它回覆的文字就能直接貼到上面的框框按「簡單解析」。</p>
+            <textarea id="ttPromptText" rows="7" readonly spellcheck="false" style="width:100%;font-size:12px;line-height:1.6;padding:10px 12px;border:1px solid var(--line2);border-radius:8px;outline:none;font-family:inherit;background:var(--surface);color:var(--ink)"></textarea>
+            <div style="margin-top:6px"><button class="btn" id="ttPromptCopy" style="padding:5px 12px;font-size:12px">📋 複製提示詞</button><span class="note" id="ttPromptCopyNote" style="margin:0 0 0 8px"></span></div>
+          </div>
+        </details>
+
+        <textarea id="ttPaste" rows="8" spellcheck="false" style="width:100%;font-size:13px;line-height:1.6;padding:10px 12px;border:1px solid var(--line2);border-radius:8px;outline:none;font-family:inherit"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <button class="btn" id="ttParse">簡單解析</button>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)"><input type="checkbox" id="ttParseClear" style="margin:0">先清空原本的課表</label>
+        </div>
+        <div class="note" id="ttParseNote"></div>
+        <div id="ttParseBad"></div>
+      </div>
+
+      <div style="overflow-x:auto">
+        <div id="ttGrid"></div>
+      </div>
+      <button class="btn" id="ttAddPeriod" style="margin-top:10px">＋ 新增節次</button>
+    </div>
+
+    <div data-ttpage="week" hidden>
+      <p class="note" style="margin:0 0 10px">每個班級這週上哪一份學習單。按「上課」時就是開這一份的 Admin 與即時繳交視窗；每週換單元只要在這裡（或主畫面「現在這節」旁的下拉）改一次。</p>
+      <div id="ttWeek"></div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn" id="ttCancel">關閉</button>
+      <button class="btn btn-primary" id="ttSave">儲存課表</button>
+    </div>
+    <div class="note" id="ttNote"></div>
   </div>
 </div>
 
@@ -290,19 +438,23 @@
     <div data-page="import" hidden>
       <div class="tab-sub" id="impSubTabbar">
         <button class="tab-btn on" data-subtab="manual">貼上／上傳名單</button>
-        <button class="tab-btn" data-subtab="classroom1">從 Classroom 匯入（單班）</button>
-        <button class="tab-btn" data-subtab="classroomAll">批量匯入全部班級</button>
+        <button class="tab-btn" data-subtab="classroom1">Classroom 匯入</button>
       </div>
 
       <div data-subpage="manual">
-        <p class="note" style="margin:0 0 10px">填年級、班級（數字），貼上或上傳名單（每行「座號,姓名」）。</p>
+        <p class="note" style="margin:0 0 10px">填年級、班級（數字），貼上或上傳名單（每行「座號,姓名」）。上傳檔案可一次選多個（在檔案總管框選、或按住 Ctrl／Shift 點選）——
+          多檔會自動從<b>檔案名稱</b>判斷班級（例如「<code style="font-size:11px">115_上406彈性(電腦).XLS</code>」→四年6班）、從<b>檔案內容</b>抓「座號」「姓名」兩欄，抓不到或抓錯的可在下面表格直接改，不想匯入的勾「略過」。</p>
         <div style="display:flex;gap:10px">
           <div class="field" style="flex:1"><label>年級</label><input id="riGrade" inputmode="numeric" placeholder="例：5"></div>
           <div class="field" style="flex:1"><label>班級</label><input id="riClass" inputmode="numeric" placeholder="例：1"></div>
         </div>
-        <div class="field"><label>名單（每行一位；貼上或上傳擇一，兩者都填會合併）</label>
+        <div class="note" style="margin:-6px 0 8px">↑ 這組年級/班級只用在下面「貼上文字」；上傳的檔案各自獨立判斷班級，互不影響。</div>
+        <div class="field"><label>貼上文字（每行一位，例：1,王小明）</label>
           <textarea id="riText" rows="6" placeholder="1,王小明&#10;2,李小華&#10;3,陳大同" style="width:100%;font-size:14px;padding:9px 11px;border:1px solid var(--line2);border-radius:8px;font-family:inherit;resize:vertical;outline:none"></textarea></div>
-        <div class="field"><label>或上傳檔案（.csv / .xlsx）</label><input type="file" id="riFile" accept=".csv,.xlsx"></div>
+        <div class="field"><label>或上傳檔案（.csv／.xlsx／.xls，可一次選多個）</label><input type="file" id="riFile" accept=".csv,.xlsx,.xls" multiple></div>
+        <div id="riFilesTableWrap" style="display:none;margin-bottom:8px">
+          <div id="riFilesTable" style="max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+        </div>
         <div class="note" id="riCount"></div>
         <div style="display:flex;justify-content:flex-end;margin-top:4px"><button class="btn btn-primary" id="riGo">匯入</button></div>
         <div class="note" id="riNote"></div>
@@ -315,24 +467,27 @@
           <div class="note" id="crNote2" style="margin:0 0 8px"></div>
           <div id="crTable" style="max-height:36vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
         </div>
-        <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn btn-primary" id="crGo" disabled>匯入</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+          <button class="btn" id="cbScanBtn">🔍 自動掃描全部班級</button>
+          <button class="btn btn-primary" id="crGo" disabled>匯入</button>
+        </div>
         <div class="note" id="crNote"></div>
-      </div>
 
-      <div data-subpage="classroomAll" hidden>
-        <p class="note" style="margin:0 0 10px">一次讀取你所有 Classroom 課程的名單，自動拆出年級／班級／座號。認得三種寫法：<code>506 03陳小明</code>、<code>506 03 陳小明</code>、<code>陳小明 506 13</code>（全形數字也認）。名字沒帶學號時，會再試著從課程名稱（如「<code>彈-成功自造機 406</code>」）推出年班，只留座號給你補。能解析的直接匯入；<b>其餘全部列在下方例外清單</b>，補齊或勾選略過後再一起寫入。</p>
-        <div class="note" id="cbProgress"></div>
-        <div id="cbResult" style="display:none">
-          <h3 style="margin:14px 0 6px;font-size:14px">將建立／更新的班級</h3>
-          <div id="cbSummary" style="max-height:22vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
-          <h3 style="margin:16px 0 6px;font-size:14px">例外（需手動處理）<span id="cbExcCount" style="font-weight:400;color:var(--muted)"></span></h3>
-          <div id="cbExcWrap" style="max-height:28vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+        <div id="cbSection" hidden style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
+          <p class="note" style="margin:0 0 10px">一次讀取你所有 Classroom 課程的名單，自動拆出年級／班級／座號。認得三種寫法：<code>506 03陳小明</code>、<code>506 03 陳小明</code>、<code>陳小明 506 13</code>（全形數字也認）。名字沒帶學號時，會再試著從課程名稱（如「<code>彈-成功自造機 406</code>」）推出年班，只留座號給你補。能解析的直接匯入；<b>其餘全部列在下方例外清單</b>，補齊或勾選略過後再一起寫入。</p>
+          <div class="note" id="cbProgress"></div>
+          <div id="cbResult" style="display:none">
+            <h3 style="margin:14px 0 6px;font-size:14px">將建立／更新的班級</h3>
+            <div id="cbSummary" style="max-height:22vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+            <h3 style="margin:16px 0 6px;font-size:14px">例外（需手動處理）<span id="cbExcCount" style="font-weight:400;color:var(--muted)"></span></h3>
+            <div id="cbExcWrap" style="max-height:28vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button class="btn" id="cbScan">重新掃描</button>
+            <button class="btn btn-primary" id="cbGo" disabled>匯入</button>
+          </div>
+          <div class="note" id="cbNote"></div>
         </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-          <button class="btn" id="cbScan">重新掃描</button>
-          <button class="btn btn-primary" id="cbGo" disabled>匯入</button>
-        </div>
-        <div class="note" id="cbNote"></div>
       </div>
     </div>
 
@@ -431,7 +586,8 @@ function onLoggedIn(u){
   $('#logoutBtn').hidden=false;
   $('#newWs').disabled=false;          // 新增學習單
   $('#aiBtn').hidden=false;            // AI 評分設定
-  loadCourses();loadWorksheets();
+  $('#ttBtn').hidden=false;            // 課表
+  Promise.all([loadCourses(),loadWorksheets()]).then(loadTimetable,loadTimetable);
 }
 $('#loginBtn').onclick=function(){
   var e=$('#email').value.trim(),p=$('#pw').value;
@@ -458,7 +614,7 @@ function coursesCollapsed(){try{return JSON.parse(localStorage.getItem('course_c
 function setCoursesCollapsed(o){try{localStorage.setItem('course_collapsed',JSON.stringify(o));}catch(e){}}
 function loadCourses(){
   var box=$('#courses');box.innerHTML='<div class="note" style="padding:4px 10px">載入中…</div>';
-  db.collection('courses').get().then(function(qs){
+  return db.collection('courses').get().then(function(qs){
     var list=[];qs.forEach(function(d){list.push(Object.assign({id:d.id},d.data()));});
     list.sort(function(a,b){return (a.grade||0)*100+(a.className||0)-((b.grade||0)*100+(b.className||0));});
     window._courses=list;
@@ -507,11 +663,14 @@ function selectCourse(cid){
   }
 }
 // ---- 即時繳交：開一個獨立彈出視窗（live-submit.html），可以拖到投影幕，不佔主畫面 ----
+function openLiveWindow(cid,ws){
+  var url='live-submit.html?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(ws);
+  return window.open(url,'liveSub_'+cid+'_'+ws,'width=900,height=640,menubar=no,toolbar=no,location=no,status=no');
+}
 function openLiveSub(){
   if(!curCourse||curCourse==='__other__'){alert('請先在左側選一個班級。');return;}
   if(!curWs){alert('請先在左側選一份學習單。');return;}
-  var url='live-submit.html?cid='+encodeURIComponent(curCourse)+'&ws='+encodeURIComponent(curWs);
-  window.open(url,'liveSub_'+curCourse+'_'+curWs,'width=900,height=640,menubar=no,toolbar=no,location=no,status=no');
+  openLiveWindow(curCourse,curWs);
 }
 function loadWorksheets(){
   var sel=$('#wsSelect');
@@ -549,11 +708,11 @@ function fetchWsTitle(id,url,el){
   }).catch(function(){});
 }
 function selectWs(id,w){
-  curWs=id; curWsCfg={title:(w&&w.title)||id,category:(w&&w.category)||'',url:(w&&w.url)||'',answerKey:(w&&w.answerKey)||null,rubric:(w&&w.rubric)||null,questions:(w&&w.questions)||null,scoring:(w&&w.scoring)||null};
+  curWs=id; curWsCfg={title:(w&&w.title)||id,category:(w&&w.category)||'',url:(w&&w.url)||'',summary:(w&&w.summary)||'',answerKey:(w&&w.answerKey)||null,rubric:(w&&w.rubric)||null,questions:(w&&w.questions)||null,scoring:(w&&w.scoring)||null};
   $('#settingsPanel').hidden=true;
   ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs'].forEach(function(x){$('#'+x).disabled=false;});
   db.collection('worksheets').doc(id).get().then(function(d){
-    if(d.exists){var c=d.data();curWsCfg.title=c.title||curWsCfg.title;curWsCfg.category=c.category||curWsCfg.category;curWsCfg.url=c.url||curWsCfg.url;curWsCfg.answerKey=c.answerKey||curWsCfg.answerKey;curWsCfg.rubric=c.rubric||curWsCfg.rubric;curWsCfg.questions=c.questions||curWsCfg.questions;curWsCfg.scoring=c.scoring||curWsCfg.scoring;}
+    if(d.exists){var c=d.data();curWsCfg.title=c.title||curWsCfg.title;curWsCfg.category=c.category||curWsCfg.category;curWsCfg.url=c.url||curWsCfg.url;curWsCfg.summary=c.summary||curWsCfg.summary;curWsCfg.answerKey=c.answerKey||curWsCfg.answerKey;curWsCfg.rubric=c.rubric||curWsCfg.rubric;curWsCfg.questions=c.questions||curWsCfg.questions;curWsCfg.scoring=c.scoring||curWsCfg.scoring;}
     $('#wsMeta').textContent='學習單：'+curWsCfg.title+'　·　ID：'+id+(curWsCfg.category?' · '+curWsCfg.category:'')+(curWsCfg.scoring?' · 自訂分數計算':' · 分數計算：預設')+(curWsCfg.rubric?' · 有評分規準':'');
   }).catch(function(){$('#wsMeta').textContent='學習單：'+id;});
   loadSubs(id);
@@ -610,8 +769,17 @@ function renderSubs(){
       '<td>'+(s.aiFeedback?'<span class="hint" title="'+String(s.aiFeedback).replace(/"/g,'&quot;')+'" style="font-weight:400;color:var(--muted);display:block;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+s.aiFeedback+'</span>':'—')+'</td>'+
       '<td>'+(s.totalScore!=null?'<b>'+s.totalScore+'</b>':'—')+(s.bonusScore?' <span class="tag" style="background:var(--ok-soft);color:var(--ok)" title="加分題 +'+s.bonusScore+' 分">🎁+'+s.bonusScore+'</span>':'')+'</td>'+
       '<td><span class="tag '+(s.status==='graded'?'graded':'sub')+'">'+(s.status==='graded'?'已評分':'已繳交')+'</span></td>'+
-      '<td><button class="btn" style="padding:4px 10px">批改</button></td>';
-    tr.querySelector('button').onclick=function(){openDrawer(s);};
+      '<td style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-view" style="padding:4px 10px">檢視</button><button class="btn btn-grade" style="padding:4px 10px">批改</button></td>';
+    tr.querySelector('.btn-grade').onclick=function(){openDrawer(s);};
+    var viewBtn=tr.querySelector('.btn-view');
+    if(curWsCfg.url){
+      viewBtn.onclick=function(){
+        var sep=curWsCfg.url.indexOf('?')>-1?'&':'?';
+        window.open(curWsCfg.url+sep+'review='+encodeURIComponent(s._id)+'#admin','_blank');
+      };
+    }else{
+      viewBtn.disabled=true;viewBtn.title='這份學習單還沒登記網址（在「學習單設定」補上）';
+    }
     rows.appendChild(tr);
   });
   setStats(view.length,graded,view.length-graded,gcount?(sum/gcount):null);
@@ -621,6 +789,41 @@ function setStats(sub,graded,pending,avg){
   $('#stAvg').textContent=avg==null?'—':avg.toFixed(1);
 }
 function fmtVal(v){return Array.isArray(v)?v.join('、'):String(v);}
+// AI 評開放題前先給的「學習單概要」（方案 C，見《學習單資料與提交規範》規劃中章節）：
+// 教師填的一句話概要＋掃 subsCache 自動彙整非開放題的題號/題型/正解＋開放題題幹（curWsCfg.questions），
+// 讓 AI 知道整份學習單在教什麼、其他題目問了什麼，不是只看到單一開放題就沒頭沒尾地打分。
+// 只在真的要送 AI 時才組（呼叫端才 call 這個函式），不用每次 renderSubs 都重算。
+function buildWorksheetOverview(){
+  var lines=['這份學習單：'+(curWsCfg.title||curWs||'')+(curWsCfg.summary?'（'+curWsCfg.summary+'）':'')];
+  var qmeta={};
+  subsCache.forEach(function(s){
+    var qtypes=s.qtypes||{};
+    Object.keys(qtypes).forEach(function(qid){
+      if(qmeta[qid])return;  // 已有代表值，同一題的題型/正解各筆學生應該一致，不必逐筆蒐集
+      var type=qtypes[qid],correct=null;
+      if(type==='score'&&s.scoreAnswers&&s.scoreAnswers[qid])correct=s.scoreAnswers[qid].correct;
+      else if(type==='experience'&&s.experienceAnswers&&s.experienceAnswers[qid])correct=s.experienceAnswers[qid].correct;
+      qmeta[qid]={type:type,correct:correct};
+    });
+  });
+  var qids=Object.keys(qmeta).sort();
+  if(qids.length){
+    var typeLabel={score:'檢測',experience:'體驗',open:'開放'};
+    lines.push('全部題目一覽（編號｜題型｜正解）：');
+    qids.forEach(function(qid){
+      var m=qmeta[qid];
+      if(m.type==='open')return;  // 開放題沒有固定正解，題幹另外用下面那段列
+      var correctTxt=(m.correct==null||m.correct==='')?'（未設定正解，只看有沒有作答）':fmtVal(m.correct);
+      lines.push('- '+qid+'｜'+(typeLabel[m.type]||m.type)+'｜正解：'+correctTxt);
+    });
+  }
+  var qs=curWsCfg.questions||[];
+  if(qs.length){
+    lines.push('開放題題幹：');
+    qs.forEach(function(q){if(q.qid&&q.prompt)lines.push('- '+q.qid+'：'+q.prompt);});
+  }
+  return lines.join('\n');
+}
 // 加分題等級：0=未加分／1=簡短／2=普通／3=詳細（老師依作答內容判斷，見《學習單資料與提交規範》§2-b）
 var BONUS_TIER_LABEL={0:'未加分 (0)',1:'+1（簡短）',2:'+2（普通）',3:'+3（詳細）'};
 function currentBonusScore(){
@@ -739,7 +942,7 @@ function gradeOne(s,render,bonusScore){
   }
   if(note){note.style.color='var(--muted)';note.textContent='調用AI評分中…';}
   return fetch(WORKBENCH+'/api/grade',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({answers:gradeInput,answerKey:curWsCfg.answerKey,rubric:curWsCfg.rubric,questions:curWsCfg.questions,bonusQids:s.bonusQids||[]})})
+    body:JSON.stringify({answers:gradeInput,answerKey:curWsCfg.answerKey,rubric:curWsCfg.rubric,questions:curWsCfg.questions,bonusQids:s.bonusQids||[],overview:buildWorksheetOverview()})})
     .then(function(r){return r.json();}).then(function(g){
       if(!g.ok)throw new Error(g.error||'評分失敗');
       s._grade=g;
@@ -851,7 +1054,7 @@ function batchGrade(btn){
   $('#mainNote').textContent='調用AI評分中…（這個班級 '+withOpen.length+' 位有開放題，一次呼叫評完，不是一筆一筆問）';
   var items=withOpen.map(function(s){return {key:s._id,answers:effectiveOpenAnswers(s)};});
   fetch(WORKBENCH+'/api/grade-batch',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({items:items,rubric:curWsCfg.rubric,questions:curWsCfg.questions,wantFeedback:wantFeedback,bonusQids:batchBonusQids(withOpen)})})
+    body:JSON.stringify({items:items,rubric:curWsCfg.rubric,questions:curWsCfg.questions,wantFeedback:wantFeedback,bonusQids:batchBonusQids(withOpen),overview:buildWorksheetOverview()})})
     .then(function(r){return r.json();}).then(function(g){
       if(!g.ok){
         writeAndFinish('；AI 批次評分失敗：'+(g.error||'未知錯誤')+'（開放題的 '+withOpen.length+' 位維持未評分，可再試一次）');
@@ -973,10 +1176,15 @@ document.querySelectorAll('#setTabbar .tab-btn').forEach(function(b){b.addEventL
 function showImpSubTab(name){
   document.querySelectorAll('#impSubTabbar .tab-btn').forEach(function(b){b.classList.toggle('on',b.dataset.subtab===name);});
   document.querySelectorAll('[data-page="import"] [data-subpage]').forEach(function(p){p.hidden=(p.dataset.subpage!==name);});
-  if(name==='classroom1')openClassroomImport();                 // 每次切進來重抓課程清單，成本低
-  if(name==='classroomAll'&&!_cbScanned)cbScan();                // 全班批量掃描較重，只在第一次自動跑，之後靠「重新掃描」
+  if(name==='classroom1')openClassroomImport();                 // 每次切進來重抓單班課程清單，成本低
 }
 document.querySelectorAll('#impSubTabbar .tab-btn').forEach(function(b){b.addEventListener('click',function(){showImpSubTab(b.dataset.subtab);});});
+// 「自動掃描全部班級」收在 Classroom 匯入分頁下方，按了才展開＋觸發較重的全課程掃描（第一次點才自動跑，之後靠「重新掃描」）
+$('#cbScanBtn').addEventListener('click',function(){
+  $('#cbSection').hidden=false;
+  if(!_cbScanned)cbScan();
+  $('#cbSection').scrollIntoView({behavior:'smooth',block:'start'});
+});
 
 $('#aiBtn').addEventListener('click',function(){
   $('#aiNote').textContent='';$('#aiTestNote').textContent='';$('#diagStat').textContent='';$('#diagBox').textContent='';
@@ -1040,6 +1248,30 @@ function nonOpenQids(){
   });
   return Object.keys(set).sort();
 }
+// 目前已收到繳交裡出現過的所有題號（含開放題），供編輯題幹時參考，避免 qid 打錯字對不上
+function allSubmittedQids(){
+  var set={};
+  subsCache.forEach(function(s){
+    Object.keys(s.scoreAnswers||{}).forEach(function(q){set[q]=1;});
+    Object.keys(s.experienceAnswers||{}).forEach(function(q){set[q]=1;});
+    Object.keys(s.openAnswers||{}).forEach(function(q){set[q]=1;});
+  });
+  return Object.keys(set).sort();
+}
+function addQuestionRow(q){
+  q=q||{qid:'',prompt:''};
+  var row=document.createElement('div');row.className='question-row';row.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center';
+  row.innerHTML='<input class="q-qid" placeholder="題號 qid" value="'+String(q.qid||'').replace(/"/g,'&quot;')+'" style="width:90px;padding:7px 9px;border:1px solid var(--line2);border-radius:7px">'
+    +'<input class="q-prompt" placeholder="題目文字（給 AI 看的題幹）" value="'+String(q.prompt||'').replace(/"/g,'&quot;')+'" style="flex:1;min-width:160px;padding:7px 9px;border:1px solid var(--line2);border-radius:7px">'
+    +'<button class="x q-del" title="刪除">×</button>';
+  row.querySelector('.q-del').onclick=function(){row.remove();};
+  $('#questionsBox').appendChild(row);
+}
+function renderQuestionsHint(){
+  var el=$('#questionsHint');if(!el)return;
+  var qids=allSubmittedQids();
+  el.textContent=qids.length?('目前收到的作答含這些題號：'+qids.join('、')):'目前還沒有人繳交，讀不到題號；可以先照學習單自己標的 qid 手動填。';
+}
 function addRubricRow(c){
   c=c||{name:'',points:'',desc:''};
   var row=document.createElement('div');row.className='rubric-row';row.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center';
@@ -1079,17 +1311,23 @@ function renderScoring(){
 function renderSettings(){
   $('#setTitle').value=curWsCfg.title||curWs||'';
   $('#setCat').value=curWsCfg.category||'';
+  $('#setSummary').value=curWsCfg.summary||'';
   $('#wsAdminBox').innerHTML=curWsCfg.url
     ?('<a href="'+curWsCfg.url+'#admin" target="_blank" class="btn" style="text-decoration:none;display:inline-block;margin-bottom:6px">開啟學習單 Admin（設定／查看標準答案）</a>'
       +'<div style="font-size:11px;color:var(--muted)">標準答案在學習單自己的 Admin 設定（網址加 #admin），這裡不重複填；下面只管分數怎麼算與開放題的 AI 評分規準。</div>')
     :'<div class="note" style="margin:0">這份學習單還沒有登記網址，補上網址後才能開啟 Admin 設定標準答案。</div>';
   renderScoring();
+  $('#questionsBox').innerHTML='';
+  var qs=curWsCfg.questions||[];
+  if(!qs.length)addQuestionRow();else qs.forEach(addQuestionRow);
+  renderQuestionsHint();
   $('#rubricBox').innerHTML='';
   var crit=(curWsCfg.rubric&&curWsCfg.rubric.criteria)||[];
   if(!crit.length)addRubricRow();else crit.forEach(addRubricRow);
   $('#settingsNote').textContent='';
 }
 $('#wsSettings').addEventListener('click',function(){var p=$('#settingsPanel');if(p.hidden){renderSettings();p.hidden=false;}else p.hidden=true;});
+$('#addQuestion').addEventListener('click',function(){addQuestionRow();});
 $('#addCriterion').addEventListener('click',function(){addRubricRow();});
 // ---- 評分總則：全域一份，存在後端 config.json 的 grade_master_rubric（見 SPEC §7-h）----
 var MR_DEFAULT='';
@@ -1123,14 +1361,16 @@ $('#mrSave').addEventListener('click',function(){
 $('#scDeduct').addEventListener('input',function(){document.querySelectorAll('#scItemsBox .sc-item').forEach(function(i){i.placeholder='預設 '+($('#scDeduct').value||1);});});
 $('#settingsSave').addEventListener('click',function(){
   if(!curWs)return;
+  var questions=[];document.querySelectorAll('#questionsBox .question-row').forEach(function(r){var qid=r.querySelector('.q-qid').value.trim();if(!qid)return;
+    questions.push({qid:qid,prompt:r.querySelector('.q-prompt').value.trim()});});
   var criteria=[];document.querySelectorAll('#rubricBox .rubric-row').forEach(function(r){var n=r.querySelector('.rk-name').value.trim();if(!n)return;
     criteria.push({name:n,points:Number(r.querySelector('.rk-pts').value)||0,desc:r.querySelector('.rk-desc').value.trim()});});
   var scoring={base:Number($('#scBase').value)||100,deduction:Number($('#scDeduct').value)||0,openWeight:Number($('#scOpenWeight').value)||0,itemPoints:{}};
   document.querySelectorAll('#scItemsBox .sc-item').forEach(function(i){var v=i.value.trim();if(v!=='')scoring.itemPoints[i.dataset.q]=Number(v)||0;});
-  var title=$('#setTitle').value.trim()||curWs,category=$('#setCat').value;
+  var title=$('#setTitle').value.trim()||curWs,category=$('#setCat').value,summary=$('#setSummary').value.trim();
   var note=$('#settingsNote');note.style.color='var(--muted)';note.textContent='儲存中…';
-  db.collection('worksheets').doc(curWs).set({title:title,category:category,scoring:scoring,rubric:{criteria:criteria}},{merge:true}).then(function(){
-    curWsCfg.title=title;curWsCfg.category=category;curWsCfg.scoring=scoring;curWsCfg.rubric=criteria.length?{criteria:criteria}:null;
+  db.collection('worksheets').doc(curWs).set({title:title,category:category,summary:summary,scoring:scoring,rubric:{criteria:criteria},questions:questions},{merge:true}).then(function(){
+    curWsCfg.title=title;curWsCfg.category=category;curWsCfg.summary=summary;curWsCfg.scoring=scoring;curWsCfg.rubric=criteria.length?{criteria:criteria}:null;curWsCfg.questions=questions.length?questions:null;
     note.style.color='var(--ok)';note.textContent='已儲存。評分時會套用這些設定。';
     $('#wsMeta').textContent='學習單：'+title+'　·　ID：'+curWs+(category?' · '+category:'')+' · 自訂分數計算'+(curWsCfg.rubric?' · 有評分規準':'');
     loadWorksheets();  // 反映標題/分類變更到下拉選單
@@ -1181,7 +1421,10 @@ function rowsToRoster(rows){
   rows.forEach(function(r){
     if(!r||!r.length)return;
     if(r.length<2)r=String(r[0]||'').split(/\s+/);
-    var seat=String(r[0]==null?'':r[0]).trim(),name=r.slice(1).join(' ').trim();
+    var seat=String(r[0]==null?'':r[0]).trim();
+    // 姓名只取第 2 欄——校務系統匯出的成績表常常後面還跟著一串成績/平均欄位，
+    // 早期版本用 r.slice(1).join(' ') 把那些也併進姓名字串，遇到這種檔案就把數字成績黏在姓名後面。
+    var name=String(r[1]==null?'':r[1]).trim();
     if(!seat||!name||!/^\d+$/.test(seat))return;   // 非數字座號（多半是標題列）自動跳過
     out.push({seatNo:Number(seat),name:name});
   });
@@ -1218,29 +1461,104 @@ function readFileRows(file){
     };r.onerror=rej;r.readAsArrayBuffer(file);});
   });
 }
-var _riFileRows=[];
-function updateRiCount(){var n=parseRoster($('#riText').value).length+_riFileRows.length;$('#riCount').textContent=n?('將匯入 '+n+' 位'):'';}
+function digitsOnly(v){return String(v||'').replace(/[^0-9]/g,'');}
+// 檔名找班級代碼：優先抓緊跟在「上／下」後面的三碼（如「115_上406彈性」→406），抓不到才退而找檔名裡任何一段
+// grade1~6+兩碼班級的三碼數字——避免抓到學年度「115」這類不相關的三位數字。
+function classCodeFromFilename(name){
+  var s=halfWidth(String(name||'').replace(/\.[^.]+$/,''));
+  var m=/[上下]\s*([1-6])([0-9]{2})(?!\d)/.exec(s);
+  if(!m)m=/(?:^|[^0-9])([1-6])([0-9]{2})(?!\d)/.exec(s);
+  return m?{grade:Number(m[1]),className:Number(m[2])}:null;
+}
+// ---- 貼上／上傳名單（合併版）：頂部年級/班級只管「貼上文字」那段；上傳檔案可一次選多個，
+// 每個檔案各自從檔名判斷班級（判斷不到、且只選了一個檔案時，退回沿用頂部年級/班級，延續舊的單檔操作習慣）----
+var _riFiles=[];
+function riFilesUsable(f){return !f.skip&&!f.error&&f.grade&&f.className&&f.roster.length;}
+function updateRiCount(){
+  var textCount=parseRoster($('#riText').value).length;
+  var usable=_riFiles.filter(riFilesUsable);
+  var fileCount=usable.reduce(function(s,f){return s+f.roster.length;},0);
+  var missing=_riFiles.filter(function(f){return !f.skip&&!f.error&&(!f.grade||!f.className);}).length;
+  var parts=[];
+  if(textCount)parts.push('文字 '+textCount+' 位');
+  if(usable.length)parts.push('檔案 '+usable.length+' 個班級共 '+fileCount+' 位');
+  $('#riCount').style.color=missing?'var(--warn)':'var(--muted)';
+  $('#riCount').textContent=(parts.length?('將匯入：'+parts.join('、')):'')
+    +(missing?('　'+missing+' 個檔案沒偵測到班級，請在上表填年級/班級'):'');
+}
+function riFilesRender(){
+  var wrap=$('#riFilesTableWrap'),box=$('#riFilesTable');
+  if(!_riFiles.length){wrap.style.display='none';updateRiCount();return;}
+  wrap.style.display='';
+  var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
+    +'<th style="text-align:left;padding:8px;position:sticky;top:0;background:var(--surface2)">檔案</th>'
+    +'<th style="padding:8px;position:sticky;top:0;background:var(--surface2)">年級</th>'
+    +'<th style="padding:8px;position:sticky;top:0;background:var(--surface2)">班級</th>'
+    +'<th style="padding:8px;position:sticky;top:0;background:var(--surface2)">學生數</th>'
+    +'<th style="padding:8px;position:sticky;top:0;background:var(--surface2)">略過</th></tr></thead><tbody>';
+  _riFiles.forEach(function(f,i){
+    h+='<tr style="border-top:1px solid var(--line)">'
+      +'<td style="padding:6px 8px">'+esc(f.name)+(f.error?('<div class="note" style="margin:2px 0 0;color:var(--warn)">'+esc(f.error)+'</div>'):'')+'</td>'
+      +'<td style="padding:6px 8px;text-align:center"><input class="rif-f" data-i="'+i+'" data-k="grade" inputmode="numeric" value="'+(f.grade||'')+'" style="width:48px;padding:4px;text-align:center;border:1px solid var(--line2);border-radius:6px;background:var(--surface);color:var(--ink)"></td>'
+      +'<td style="padding:6px 8px;text-align:center"><input class="rif-f" data-i="'+i+'" data-k="className" inputmode="numeric" value="'+(f.className||'')+'" style="width:48px;padding:4px;text-align:center;border:1px solid var(--line2);border-radius:6px;background:var(--surface);color:var(--ink)"></td>'
+      +'<td style="padding:6px 8px;text-align:center">'+f.roster.length+'</td>'
+      +'<td style="padding:6px 8px;text-align:center"><input type="checkbox" class="rif-skip" data-i="'+i+'"'+(f.skip?' checked':'')+'></td>'
+      +'</tr>';
+  });
+  h+='</tbody></table>';
+  box.innerHTML=h;
+  Array.prototype.forEach.call(box.querySelectorAll('.rif-f'),function(el){
+    el.addEventListener('input',function(){var v=digitsOnly(el.value);_riFiles[+el.dataset.i][el.dataset.k]=v?Number(v):'';updateRiCount();});
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('.rif-skip'),function(el){
+    el.addEventListener('change',function(){_riFiles[+el.dataset.i].skip=el.checked;updateRiCount();});
+  });
+  updateRiCount();
+}
 $('#riText').addEventListener('input',updateRiCount);
 $('#riFile').addEventListener('change',function(){
-  var f=this.files[0];if(!f){_riFileRows=[];updateRiCount();return;}
-  $('#riCount').textContent='讀取檔案中…';
-  readFileRows(f).then(function(rows){_riFileRows=rows;updateRiCount();})
-    .catch(function(e){$('#riCount').textContent='檔案讀取失敗：'+e.message;});
+  var files=Array.prototype.slice.call(this.files);
+  if(!files.length){_riFiles=[];riFilesRender();return;}
+  $('#riCount').style.color='var(--muted)';$('#riCount').textContent='讀取 '+files.length+' 個檔案中…';
+  $('#riFilesTableWrap').style.display='none';
+  Promise.all(files.map(function(file){
+    var cls=classCodeFromFilename(file.name);
+    var fallback=(files.length===1&&!cls)?{grade:digitsOnly($('#riGrade').value),className:digitsOnly($('#riClass').value)}:null;
+    return readFileRows(file).then(function(rows){
+      return {name:file.name,
+        grade:cls?cls.grade:(fallback&&fallback.grade?Number(fallback.grade):''),
+        className:cls?cls.className:(fallback&&fallback.className?Number(fallback.className):''),
+        roster:rows,skip:false,error:rows.length?'':'讀不到座號／姓名（檢查是不是有「座號」「姓名」欄位）'};
+    }).catch(function(e){
+      return {name:file.name,grade:cls?cls.grade:'',className:cls?cls.className:'',roster:[],skip:false,error:'檔案讀取失敗：'+e.message};
+    });
+  })).then(function(list){_riFiles=list;riFilesRender();});
 });
 $('#riGo').addEventListener('click',function(){
   var grade=digitsOnly($('#riGrade').value),cls=digitsOnly($('#riClass').value);
-  var list=parseRoster($('#riText').value).concat(_riFileRows);
+  var textRows=parseRoster($('#riText').value);
+  var fileEntries=_riFiles.filter(riFilesUsable);
   var note=$('#riNote');note.style.color='var(--warn)';
-  if(!grade||!cls){note.textContent='請填年級與班級（數字）。';return;}
-  if(!list.length){note.textContent='沒有解析到名單（每行「座號,姓名」，或上傳 CSV/XLSX）。';return;}
-  var cid=courseId(grade,cls),batch=db.batch();
-  batch.set(db.collection('courses').doc(cid),{grade:Number(grade),className:Number(cls),name:courseName(grade,cls),source:'manual'},{merge:true});
-  list.forEach(function(st){batch.set(db.collection('courses').doc(cid).collection('students').doc(String(st.seatNo)),{seatNo:st.seatNo,name:st.name},{merge:true});});
+  if(!textRows.length&&!fileEntries.length){note.textContent='沒有要匯入的名單（貼上文字，或上傳檔案）。';return;}
+  if(textRows.length&&(!grade||!cls)){note.textContent='有貼上文字名單，但上面的年級／班級沒填。';return;}
+  var ops=[],classCount=0,total=0;
+  if(textRows.length){
+    var cid0=courseId(grade,cls);
+    ops.push({ref:db.collection('courses').doc(cid0),data:{grade:Number(grade),className:Number(cls),name:courseName(grade,cls),source:'manual'}});
+    textRows.forEach(function(st){ops.push({ref:db.collection('courses').doc(cid0).collection('students').doc(String(st.seatNo)),data:{seatNo:st.seatNo,name:st.name}});total++;});
+    classCount++;
+  }
+  fileEntries.forEach(function(f){
+    var cid=courseId(f.grade,f.className);
+    ops.push({ref:db.collection('courses').doc(cid),data:{grade:f.grade,className:f.className,name:courseName(f.grade,f.className),source:'manual'}});
+    f.roster.forEach(function(st){ops.push({ref:db.collection('courses').doc(cid).collection('students').doc(String(st.seatNo)),data:{seatNo:st.seatNo,name:st.name}});total++;});
+    classCount++;
+  });
   note.style.color='var(--muted)';note.textContent='匯入中…';
-  batch.commit().then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+list.length+' 位到「'+courseName(grade,cls)+'」。';loadCourses();})
+  commitChunked(ops,function(done,tot){note.textContent='匯入中…（'+done+' / '+tot+'）';})
+    .then(function(){note.style.color='var(--ok)';note.textContent='已匯入 '+classCount+' 個班級、共 '+total+' 位學生。';loadCourses();})
     .catch(function(e){note.style.color='var(--warn)';note.textContent='匯入失敗：'+friendlyErr(e);});
 });
-function digitsOnly(v){return String(v||'').replace(/[^0-9]/g,'');}
 
 // ---- 從 Google Classroom 匯入名單（自動拆「年班 座號 姓名」格式，如「510 01 王小明」）----
 var CR={students:[],rows:[]};
@@ -1620,6 +1938,401 @@ $('#ccGo').addEventListener('click',function(){
     if(pick==='__create__')$('#ccCourse').dispatchEvent(new Event('change'));   // 重新列作業，下次就對得到同名這份
   }).catch(function(e){self.disabled=false;note.style.color='var(--warn)';note.textContent='失敗：'+e.message;});
 });
+// ================= 課表：查當下星期／節次 → 一鍵「上課」 =================
+// 存在伺服器端 timetable.json（GET/POST /api/timetable），不放 Firestore：課表是這台電腦上
+// 老師自己的排課，跟學生資料無關，也就不必為它改 firestore.rules。
+var TT={periods:[],slots:{},currentWs:{}}, ttTimer=null;
+var DAY_CN=['日','一','二','三','四','五','六'];
+var CN_NUM={'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};
+
+function ttFetch(method,body){
+  return fetch(WORKBENCH+'/api/timetable',method==='POST'
+    ?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
+    :undefined).then(function(r){return r.json();});
+}
+function loadTimetable(){
+  return ttFetch('GET').then(function(r){
+    if(r&&r.ok&&r.timetable)TT=r.timetable;
+    renderNow();
+    if(!ttTimer)ttTimer=setInterval(renderNow,30000);   // 每 30 秒重算一次「現在這節」
+  }).catch(function(){renderNow();});
+}
+function courseById(cid){return (window._courses||[]).filter(function(c){return c.id===cid;})[0];}
+function courseLabel(cid){var c=courseById(cid);return c?(c.name||cid):cid;}
+function wsTitleOf(id){var m=(window._wsMeta||{})[id]||{};return m.title||WS_TITLES[id]||id;}
+function hhmm2min(t){var m=/^(\d{1,2}):(\d{2})$/.exec(String(t||''));return m?(+m[1])*60+(+m[2]):null;}
+function slotKey(day,period){return day+'-'+period;}
+function ttPeriods(){return (TT.periods||[]).slice().sort(function(a,b){return a.no-b.no;});}
+function slotsOfDay(day){
+  return ttPeriods().map(function(p){return {period:p.no,start:p.start,end:p.end,cid:TT.slots[slotKey(day,p.no)]||''};})
+    .filter(function(x){return x.cid;});
+}
+// 今天先找正在上的那節，沒有就找今天接下來的；今天沒課就往後找第一個有課的日子（週末自然跳過，課表只排一～五）
+function nextSlot(now){
+  now=now||new Date();
+  var mins=now.getHours()*60+now.getMinutes();
+  for(var off=0;off<7;off++){
+    var day=((now.getDay()+off)%7);
+    var list=slotsOfDay(day);
+    for(var i=0;i<list.length;i++){
+      var st=hhmm2min(list[i].start),en=hhmm2min(list[i].end);
+      if(st==null||en==null)continue;
+      if(off===0&&mins>=en)continue;                    // 今天已經下課的節次跳過
+      return Object.assign({day:day,offset:off,live:(off===0&&mins>=st&&mins<en),
+        minsToStart:(off===0?st-mins:null)},list[i]);
+    }
+  }
+  return null;
+}
+function wsOptionsHtml(sel,blankLabel){
+  var meta=window._wsMeta||{},groups={};
+  Object.keys(meta).forEach(function(id){var c=meta[id].category||'未分類';(groups[c]=groups[c]||[]).push(id);});
+  var h='<option value="">'+esc(blankLabel||'（未指定）')+'</option>';
+  ['四上','四下','五上','五下','未分類'].forEach(function(cat){
+    var list=groups[cat];if(!list||!list.length)return;
+    list.sort();
+    h+='<optgroup label="'+esc(cat)+'">';
+    list.forEach(function(id){h+='<option value="'+esc(id)+'"'+(id===sel?' selected':'')+'>'+esc(wsTitleOf(id))+'</option>';});
+    h+='</optgroup>';
+  });
+  return h;
+}
+function renderNow(){
+  var card=$('#nowCard');if(!card)return;
+  if(!db||!auth||!auth.currentUser){card.hidden=true;return;}
+  card.hidden=false;
+  if(!Object.keys(TT.slots||{}).length){
+    $('#nowWhen').textContent='尚未匯入課表';
+    $('#nowClass').textContent='—';
+    $('#nowWs').textContent='按頁首「課表」貼上或用格子填一次，之後每堂課就能從這裡一鍵上課。';
+    $('#nowWsSel').innerHTML='<option value="">本週學習單…</option>';$('#nowWsSel').disabled=true;
+    $('#startClassBtn').disabled=true;$('#todayRow').innerHTML='';
+    return;
+  }
+  var sl=nextSlot(new Date());
+  if(!sl){
+    $('#nowWhen').textContent='課表裡找不到接下來的課（可能只排了今天已經上完的節次）';
+    $('#nowClass').textContent='—';$('#nowWs').textContent='';
+    $('#nowWsSel').disabled=true;$('#startClassBtn').disabled=true;
+  }else{
+    var when='星期'+DAY_CN[sl.day]+' 第'+sl.period+'節　'+sl.start+'–'+sl.end;
+    if(sl.live)when+='　·　進行中';
+    else if(sl.offset===0)when+='　·　'+(sl.minsToStart<=0?'即將開始':('還有 '+sl.minsToStart+' 分鐘'));
+    else when+='　·　'+(sl.offset===1?'明天':'下一個上課日');
+    $('#nowWhen').textContent=when;
+    $('#nowClass').textContent=courseLabel(sl.cid)+(courseById(sl.cid)?'':'（名單裡沒有這個班級）');
+    var ws=(TT.currentWs||{})[sl.cid]||'';
+    $('#nowWsSel').disabled=false;
+    $('#nowWsSel').innerHTML=wsOptionsHtml(ws,'本週學習單…');
+    $('#nowWsSel').dataset.cid=sl.cid;
+    var meta=(window._wsMeta||{})[ws]||{};
+    $('#nowWs').textContent=!ws
+      ?'尚未指定本週學習單——從右邊下拉選一份（選了就存進課表）。'
+      :('本週學習單：'+wsTitleOf(ws)+(meta.url?'':'（這份還沒登錄網址，開不了 Admin；可用「新增學習單」補上）'));
+    $('#startClassBtn').disabled=!ws;
+  }
+  // 今日各節：點一下就上那一節（補開、或提前開下一節都用這個）
+  var today=new Date().getDay(),list=slotsOfDay(today);
+  $('#todayRow').innerHTML=list.length
+    ? list.map(function(x){
+        var on=sl&&sl.offset===0&&sl.period===x.period;
+        return '<button class="chip'+(on?' on':'')+'" data-day="'+today+'" data-period="'+x.period+'">第'+x.period+'節 '+esc(courseLabel(x.cid))+'</button>';
+      }).join('')
+    : '<span class="note" style="margin:0">今天（星期'+DAY_CN[today]+'）課表上沒有課。</span>';
+}
+$('#todayRow').addEventListener('click',function(e){
+  var b=e.target.closest('.chip');if(!b)return;
+  var cid=TT.slots[slotKey(b.dataset.day,b.dataset.period)];
+  if(!cid)return;
+  startClass(cid,(TT.currentWs||{})[cid]||'');
+});
+$('#nowWsSel').addEventListener('change',function(){
+  var cid=this.dataset.cid;if(!cid)return;
+  TT.currentWs=TT.currentWs||{};
+  if(this.value)TT.currentWs[cid]=this.value;else delete TT.currentWs[cid];
+  ttFetch('POST',TT).then(function(r){if(r&&r.ok&&r.timetable)TT=r.timetable;renderNow();})
+    .catch(function(e){$('#mainNote').textContent='本週學習單存檔失敗：'+e.message;});
+});
+// 已開過的學習單 Admin 視窗（依 wsId 記住視窗參考），「上課」時若還開著就不重開，只補開即時繳交——
+// 避免每節課都把 Admin 分頁搶回最上層/重新整理，老師可能正在那份 Admin 上設定到一半。
+var wsAdminWindows={};
+function isWinOpen(w){try{return !!w&&!w.closed;}catch(e){return false;}}
+// 一鍵上課：切到該班級與學習單 → 開學習單 Admin（網址#admin，若已開著則跳過）→ 開即時繳交偵測視窗
+function startClass(cid,wsId){
+  if(!cid)return;
+  var note=$('#mainNote');
+  if(!courseById(cid)){note.textContent='課表上的班級「'+cid+'」還不在名單裡，請先到「設定 → 名單匯入」建立這個班級。';return;}
+  if(!wsId){note.textContent='「'+courseLabel(cid)+'」還沒指定本週學習單，先在上方下拉選一份。';return;}
+  var meta=(window._wsMeta||{})[wsId]||{};
+  selectCourse(cid);
+  var sel=$('#wsSelect');
+  if(sel&&!sel.querySelector('option[value="'+wsId+'"]')){
+    var op=document.createElement('option');op.value=wsId;op.textContent=wsTitleOf(wsId);sel.appendChild(op);
+  }
+  if(sel)sel.value=wsId;
+  selectWs(wsId,meta);
+  var opened=[],alreadyOpen=isWinOpen(wsAdminWindows[wsId]),want=meta.url&&!alreadyOpen?2:1;
+  if(meta.url&&!alreadyOpen){
+    var w=window.open(meta.url.split('#')[0]+'#admin','wsAdmin_'+wsId);
+    if(w){wsAdminWindows[wsId]=w;opened.push('學習單 Admin');}
+  }else if(alreadyOpen){
+    opened.push('學習單 Admin（已開著，未重開）');
+  }
+  if(openLiveWindow(cid,wsId))opened.push('即時繳交');
+  if(!opened.length){
+    note.textContent='視窗被瀏覽器攔住了，請允許這個網站的彈出視窗後再按一次「上課」。';
+    return;
+  }
+  note.textContent='已開啟：'+opened.join('、')+'（'+courseLabel(cid)+' · '+wsTitleOf(wsId)+'）'
+    +(meta.url?'':'　※這份學習單沒有登錄網址，Admin 沒開；到「新增學習單」補上網址即可。')
+    +(opened.length<want?'　※有一個視窗被瀏覽器攔住，請允許彈出視窗。':'');
+}
+$('#startClassBtn').addEventListener('click',function(){
+  var cid=$('#nowWsSel').dataset.cid||'';
+  startClass(cid,(TT.currentWs||{})[cid]||$('#nowWsSel').value||'');
+});
+
+// ---- 課表 modal ----
+function ttOpen(){
+  $('#ttImportBox').hidden=true;$('#ttImportToggle').textContent='📋 貼上匯入';
+  renderTtGrid();renderTtWeek();
+  $('#ttNote').textContent='';$('#ttParseNote').textContent='';$('#ttParseBad').innerHTML='';
+  $('#ttModal').classList.remove('off');
+}
+$('#ttBtn').addEventListener('click',ttOpen);
+$('#ttCancel').addEventListener('click',function(){$('#ttModal').classList.add('off');});
+$('#ttTabbar').addEventListener('click',function(e){
+  var b=e.target.closest('.tab-btn');if(!b)return;
+  Array.prototype.forEach.call(this.querySelectorAll('.tab-btn'),function(x){x.classList.toggle('on',x===b);});
+  Array.prototype.forEach.call(document.querySelectorAll('[data-ttpage]'),function(pg){pg.hidden=(pg.dataset.ttpage!==b.dataset.tab);});
+});
+$('#ttImportToggle').addEventListener('click',function(){
+  var box=$('#ttImportBox'),show=box.hidden;
+  box.hidden=!show;
+  this.textContent=show?'📋 收起貼上匯入':'📋 貼上匯入';
+});
+// 給老師複製去貼給任何看得懂圖片的 AI（不是本站呼叫 AI）：照片轉出來的文字直接對上「簡單解析」看得懂的格式。
+var TT_IMPORT_PROMPT='請把這張課表照片轉換成文字，只要輸出課表本身，不要任何其他說明或標題。\n\n'
+  +'規則：\n'
+  +'・每一節課輸出一行，格式為：星期 上課時間-下課時間 節次 班級代碼\n'
+  +'　例如：一 09:35-10:15 2 401\n'
+  +'　代表星期一、09:35 到 10:15、第2節、上401班（四年1班）的課\n'
+  +'・星期只用「一二三四五」（週一到週五），六日不要輸出\n'
+  +'・時間一律 24 小時制 HH:MM，用「-」連接上課與下課時間\n'
+  +'・節次是這節課當天的第幾節（數字）；如果照片沒印節次編號，就依這天課表由早到晚自己編 1、2、3……\n'
+  +'・班級代碼＝年級（1~6 的數字）加兩碼班級編號，例如 401＝四年1班、502＝五年2班、610＝六年10班；\n'
+  +'　如果照片寫的是「五年2班」這種文字，也請轉成「502」再輸出\n'
+  +'・空堂、導師時間、午休、沒有固定班級的格子都不要輸出\n'
+  +'・每一節只輸出一行，不要加任何多餘的文字';
+$('#ttPromptText').value=TT_IMPORT_PROMPT;
+$('#ttPromptCopy').addEventListener('click',function(){
+  var note=$('#ttPromptCopyNote');
+  var done=function(){note.style.color='var(--ok)';note.textContent='已複製，貼給 AI 附上照片即可。';};
+  var fail=function(){note.style.color='var(--warn)';note.textContent='複製失敗，請手動選取文字複製。';};
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(TT_IMPORT_PROMPT).then(done).catch(fail);
+  }else{
+    try{var ta=$('#ttPromptText');ta.select();document.execCommand('copy');done();}catch(e){fail();}
+  }
+});
+function courseOptionsHtml(sel){
+  var h='<option value="">—</option>',seen={};
+  (window._courses||[]).forEach(function(c){
+    seen[c.id]=true;
+    h+='<option value="'+esc(c.id)+'"'+(c.id===sel?' selected':'')+'>'+esc(c.name||c.id)+'</option>';
+  });
+  // 課表上有、名單裡卻還沒建立的班級：保留成選項，不要一開編輯器就被靜靜清掉
+  Object.keys(TT.slots||{}).forEach(function(k){
+    var cid=TT.slots[k];
+    if(cid&&!seen[cid]){seen[cid]=true;
+      h+='<option value="'+esc(cid)+'"'+(cid===sel?' selected':'')+'>'+esc(cid)+'（名單缺）</option>';}
+  });
+  return h;
+}
+// 課表格子＝唯一畫面：節次的編號/上課/下課時間跟當節五個班級選單同一列一起編輯，不再分兩個分頁。
+// 存檔時直接照「這一列目前的節次編號」與「這一列裡選單的先後順序（星期一～五）」組 key，
+// 不依賴渲染當下就定死的 data-key——這樣改了節次編號、新增/刪除節次都不會讓已選的班級對錯欄位。
+function renderTtGrid(){
+  var h='<table class="ttTable"><colgroup><col style="width:150px">'
+    +'<col><col><col><col><col></colgroup><thead><tr><th>節次</th>';
+  for(var d=1;d<=5;d++)h+='<th>星期'+DAY_CN[d]+'</th>';
+  h+='</tr></thead><tbody>';
+  ttPeriods().forEach(function(p){
+    h+='<tr class="tt-prow">'
+      +'<th class="ttPeriodCell">第<input class="tt-pno" inputmode="numeric" value="'+esc(p.no)+'" style="width:32px;display:inline-block">節'
+      +'<div class="row"><input class="tt-pstart" value="'+esc(p.start)+'" placeholder="上課 HH:MM"><span>–</span><input class="tt-pend" value="'+esc(p.end)+'" placeholder="下課 HH:MM"></div>'
+      +'<div class="row"><button class="btn tt-pdel">刪除本節</button></div></th>';
+    for(var d=1;d<=5;d++){
+      var cid=TT.slots[slotKey(d,p.no)]||'';
+      h+='<td><select class="tt-cell" data-day="'+d+'">'+courseOptionsHtml(cid)+'</select></td>';
+    }
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  if(!(window._courses||[]).length)h+='<p class="note">還沒有任何班級名單，下拉會是空的——先到「設定 → 名單匯入」建立班級，或用「貼上匯入」填完再回來對照。</p>';
+  $('#ttGrid').innerHTML=h;
+}
+$('#ttGrid').addEventListener('click',function(e){
+  var b=e.target.closest('.tt-pdel');if(!b)return;
+  b.closest('.tt-prow').remove();
+});
+$('#ttAddPeriod').addEventListener('click',function(){
+  var tb=$('#ttGrid').querySelector('tbody');
+  if(!tb){renderTtGrid();tb=$('#ttGrid').querySelector('tbody');}
+  var rows=tb.querySelectorAll('.tt-prow'),maxNo=0;
+  Array.prototype.forEach.call(rows,function(tr){maxNo=Math.max(maxNo,Number(digitsOnly(tr.querySelector('.tt-pno').value))||0);});
+  var tr=document.createElement('tr');tr.className='tt-prow';
+  var cells='<th class="ttPeriodCell">第<input class="tt-pno" inputmode="numeric" value="'+(maxNo+1)+'" style="width:32px;display:inline-block">節'
+    +'<div class="row"><input class="tt-pstart" value="" placeholder="上課 HH:MM"><span>–</span><input class="tt-pend" value="" placeholder="下課 HH:MM"></div>'
+    +'<div class="row"><button class="btn tt-pdel">刪除本節</button></div></th>';
+  for(var d=1;d<=5;d++)cells+='<td><select class="tt-cell" data-day="'+d+'">'+courseOptionsHtml('')+'</select></td>';
+  tr.innerHTML=cells;
+  tb.appendChild(tr);
+});
+function renderTtWeek(){
+  var cids=[];
+  Object.keys(TT.slots||{}).forEach(function(k){var c=TT.slots[k];if(c&&cids.indexOf(c)<0)cids.push(c);});
+  cids.sort();
+  if(!cids.length){$('#ttWeek').innerHTML='<p class="note" style="margin:0">課表格子還是空的，先填課表再回來指定學習單。</p>';return;}
+  $('#ttWeek').innerHTML='<table class="ttTable"><thead><tr><th style="width:170px">班級</th><th>本週學習單</th></tr></thead><tbody>'
+    +cids.map(function(cid){
+      return '<tr><th style="text-align:left">'+esc(courseLabel(cid))+'</th>'
+        +'<td><select class="tt-week" data-cid="'+esc(cid)+'">'+wsOptionsHtml((TT.currentWs||{})[cid]||'')+'</select></td></tr>';
+    }).join('')+'</tbody></table>';
+}
+// ---- 貼上匯入：一行一節課，順序不拘；對不上的集中列成例外，不靜靜吞掉 ----
+function ttNorm(t){return halfWidth(t).replace(/[，、,\/|]+/g,' ').replace(/\s+/g,' ').trim();}
+function padHM(t){return t.length===4?('0'+t):t;}
+function ttDay(tok){
+  var m=/^(?:週|星期|禮拜)?([一二三四五1-5])$/.exec(tok);
+  return m?(CN_NUM[m[1]]||Number(m[1])):null;
+}
+function ttPeriodNo(tok){
+  var m=/^第?([0-9]{1,2}|[一二三四五六七八九])節?$/.exec(tok);
+  if(!m)return null;
+  var n=CN_NUM[m[1]]||Number(m[1]);
+  return (n>=1&&n<=12)?n:null;
+}
+// 「09:35-10:15」這種上課-下課時間一起寫在同一個 token（課表照片轉文字最常見的格式，見貼上匯入的提示詞）；
+// 分隔符號接受 - ～ 至 到，時間需合法且下課晚於上課，否則當成不是時間（讓它落到 ttCid 去，會直接解析失敗，
+// 讓那一行進「對不上」清單，而不是偷偷吃掉一個看起來像時間、其實格式錯誤的東西）。
+var HM=/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+function ttTimeRange(tok){
+  var m=/^([0-9]{1,2}:[0-9]{2})\s*[-~－至到]\s*([0-9]{1,2}:[0-9]{2})$/.exec(halfWidth(tok));
+  if(!m)return null;
+  var st=padHM(m[1]),en=padHM(m[2]);
+  return (HM.test(st)&&HM.test(en)&&en>st)?{start:st,end:en}:null;
+}
+function ttCid(text){
+  var t=halfWidth(text).replace(/\s+/g,''),m;
+  if(!t)return '';
+  if((m=/^g([1-9])-c([0-9]{1,2})$/i.exec(t)))return 'g'+m[1]+'-c'+Number(m[2]);
+  if((m=/^([1-9]|[一二三四五六])年([0-9]{1,2})班?$/.exec(t)))return 'g'+(CN_NUM[m[1]]||m[1])+'-c'+Number(m[2]);
+  if((m=/^([1-6])([0-9]{2})$/.exec(t)))return 'g'+m[1]+'-c'+Number(m[2]);
+  if((m=/^([1-6])[-_]([0-9]{1,2})$/.exec(t)))return 'g'+m[1]+'-c'+Number(m[2]);
+  if((m=/^([一二三四五六])([0-9]{1,2})$/.exec(t)))return 'g'+CN_NUM[m[1]]+'-c'+Number(m[2]);
+  return '';
+}
+function ttParseLine(line){
+  var toks=ttNorm(line).split(' ').filter(function(x){return x;});
+  if(!toks.length)return null;
+  var day=null,period=null,time=null,rest=[];
+  toks.forEach(function(tok){
+    var isClassCode=/^[0-9]{3}$/.test(tok);             // 502／406 這種是班級，不是星期也不是節次
+    if(day===null&&!isClassCode){var d=ttDay(tok);if(d!==null){day=d;return;}}
+    if(time===null){var tr=ttTimeRange(tok);if(tr){time=tr;return;}}
+    if(period===null&&!isClassCode){var pn=ttPeriodNo(tok);if(pn!==null){period=pn;return;}}
+    rest.push(tok);
+  });
+  var text=rest.join(' ');
+  return {raw:line.trim(),day:day,period:period,time:time,cid:ttCid(text),text:text};
+}
+// 讀「課表格子」目前畫面上的狀態：day 靠每個選單在該列的第幾個（1～5），節次編號靠該列當下的
+// 「第 N 節」輸入框——都是即時讀 DOM，不是渲染當下就定死的字串，所以改節次編號、加減節次都不會讓
+// 已選好的班級對錯欄位（這是先前「節次時間」跟「課表格子」分兩個分頁時，曾經存在的落差來源）。
+function collectTtSlots(){
+  var slots={};
+  Array.prototype.forEach.call(document.querySelectorAll('.tt-prow'),function(tr){
+    var no=Number(digitsOnly(tr.querySelector('.tt-pno').value));
+    if(!no)return;
+    Array.prototype.forEach.call(tr.querySelectorAll('.tt-cell'),function(sel){
+      if(sel.value)slots[slotKey(sel.dataset.day,no)]=sel.value;
+    });
+  });
+  return slots;
+}
+// 解析出來的節次若不在目前的課表格子裡，補一列（時間留空，儲存時會被擋下來要求填）——
+// 不自己編一個上下課時間，因為「現在第幾節」是靠這個時間算的，編出來的會算錯。
+function ttEnsurePeriodRow(no){
+  if((TT.periods||[]).some(function(p){return p.no===no;}))return false;
+  TT.periods=(TT.periods||[]).concat([{no:no,start:'',end:''}]);
+  return true;
+}
+// 這一行如果連時間一起寫了（例如「一 09:35-10:15 2 401」），直接把該節次的上課/下課時間填上去——
+// 同一個節次被多行提到時，以最後一次貼上的時間為準（教師整份重貼時，這樣最不容易對錯）。
+function ttSetPeriodTime(no,time){
+  var p=(TT.periods||[]).find(function(x){return x.no===no;});
+  if(p){p.start=time.start;p.end=time.end;}
+}
+$('#ttParse').addEventListener('click',function(){
+  var lines=String($('#ttPaste').value||'').split(/\r?\n/).filter(function(x){return x.trim();});
+  if(!lines.length){$('#ttParseNote').style.color='var(--warn)';$('#ttParseNote').textContent='貼上內容是空的。';return;}
+  var slots=$('#ttParseClear').checked?{}:collectTtSlots();
+  if($('#ttParseClear').checked)TT.periods=[];
+  var ok=0,bad=[],added=[],timed=[];
+  lines.forEach(function(ln){
+    var r=ttParseLine(ln);if(!r)return;
+    var why=!r.day?'看不出星期':(!r.period?'看不出節次':(!r.cid?'看不出班級':(!courseById(r.cid)?('名單裡沒有這個班級（'+r.cid+'）'):'')));
+    if(why){bad.push({raw:r.raw,why:why});return;}
+    if(ttEnsurePeriodRow(r.period))added.push(r.period);
+    if(r.time){ttSetPeriodTime(r.period,r.time);if(timed.indexOf(r.period)<0)timed.push(r.period);}
+    slots[slotKey(r.day,r.period)]=r.cid;ok++;
+  });
+  TT.slots=slots;
+  added.sort(function(a,b){return a-b;});timed.sort(function(a,b){return a-b;});
+  renderTtGrid();renderTtWeek();
+  $('#ttParseNote').style.color=ok?'var(--ok)':'var(--warn)';
+  $('#ttParseNote').textContent='解析成功 '+ok+' 筆'+(bad.length?('，'+bad.length+' 行對不上（列在下面，可改字再解析一次，或直接在下面格子手動選）'):'')+'。'
+    +(timed.length?('第'+timed.join('、')+'節已依貼上的內容填好上下課時間。'):'')
+    +(added.length?('第'+added.join('、')+'節原本不在課表裡，已各補一列'+(timed.length?'':'（請在該列填上下課時間，留空存不了）')+'。'):'')
+    +'確認格子沒錯後按「儲存課表」。';
+  $('#ttParseBad').innerHTML=bad.length
+    ?('<table class="ttTable" style="margin-top:8px"><thead><tr><th style="text-align:left">原始文字</th><th style="width:230px">對不上的原因</th></tr></thead><tbody>'
+      +bad.map(function(b){return '<tr><td>'+esc(b.raw)+'</td><td>'+esc(b.why)+'</td></tr>';}).join('')+'</tbody></table>')
+    :'';
+});
+$('#ttSave').addEventListener('click',function(){
+  var btn=this,note=$('#ttNote'),periods=[],bad=[],seenNo={},dupe=[];
+  Array.prototype.forEach.call(document.querySelectorAll('.tt-prow'),function(tr){
+    var no=Number(digitsOnly(tr.querySelector('.tt-pno').value)),
+        st=halfWidth(tr.querySelector('.tt-pstart').value),
+        en=halfWidth(tr.querySelector('.tt-pend').value);
+    if(!no&&!st&&!en)return;
+    if(!no||!HM.test(st)||!HM.test(en)||padHM(en)<=padHM(st)){
+      bad.push('第'+(no||'?')+'節（'+(st||'空')+'–'+(en||'空')+'）');return;
+    }
+    if(seenNo[no])dupe.push(no);else seenNo[no]=true;
+    periods.push({no:no,start:padHM(st),end:padHM(en)});
+  });
+  if(bad.length){note.style.color='var(--warn)';note.textContent='節次時間格式不對（要 HH:MM 24 小時制，下課要晚於上課）：'+bad.join('、');return;}
+  if(dupe.length){note.style.color='var(--warn)';note.textContent='節次編號重複：第'+dupe.join('、')+'節，請先改成不同編號（同編號會互相蓋掉班級選擇）。';return;}
+  if(!periods.length){note.style.color='var(--warn)';note.textContent='至少要留一節（按「＋新增節次」加一列）。';return;}
+  var currentWs={};
+  Array.prototype.forEach.call(document.querySelectorAll('.tt-week'),function(sel){if(sel.value)currentWs[sel.dataset.cid]=sel.value;});
+  // 沒出現在「本週學習單」表格裡的班級（例如剛剛才從格子移除），原本存過的指定保留，不被空白覆蓋
+  Object.keys(TT.currentWs||{}).forEach(function(cid){
+    if(!(cid in currentWs)&&!document.querySelector('.tt-week[data-cid="'+cid+'"]'))currentWs[cid]=TT.currentWs[cid];
+  });
+  btn.disabled=true;note.style.color='var(--muted)';note.textContent='儲存中…';
+  ttFetch('POST',{periods:periods,slots:collectTtSlots(),currentWs:currentWs}).then(function(r){
+    btn.disabled=false;
+    if(!r||!r.ok){note.style.color='var(--warn)';note.textContent='儲存失敗：'+((r&&r.error)||'未知錯誤');return;}
+    TT=r.timetable;note.style.color='var(--ok)';
+    note.textContent='已儲存（'+Object.keys(TT.slots).length+' 節課、'+TT.periods.length+' 個節次時間）。';
+    renderTtGrid();renderTtWeek();renderNow();
+  }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='儲存失敗：'+e.message;});
+});
+
 // P3 AI 批次評分（整份學習單）
 $('#aiGrade').addEventListener('click',function(){batchGrade(this);});
 

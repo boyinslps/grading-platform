@@ -13,10 +13,12 @@
 | `student-submit.js` | 可重用的學生「繳交」模組（互動教材引入即可）|
 | `demo-worksheet.html` | 繳交測試示範頁 |
 | `worksheets.json` | 學習單登錄檔：完成一份就把網址寫進來 |
+| `timetable.json` | 課表（星期×節次→班級、節次上下課時間、每班本週學習單）——第一次按「儲存課表」才產生，**不進 git** |
 | `firestore.rules` | Firestore 安全規則（到 Firebase Console 部署）|
 | `server.py` | 本機伺服器（port 8780）：靜態檔＋AI 評分＋Google OAuth／Classroom（含依學習單名稱自動建立作業）|
 | `config.json` | 本專案自己的設定（AI Key、Google client_secret、token）——**執行後自動產生，不進 git** |
-| `啟動評分平台.bat` | 雙擊啟動；用旁邊工作台的 portable Python 執行 |
+| `啟動評分平台.bat` | 雙擊啟動；用本資料夾自帶的 `runtime\python`（找不到才退而找旁邊工作台的、或系統 Python） |
+| `runtime/` | 自帶的可攜式 Python（跟資料夾一起複製到別台電腦／USB 就能跑，不進 git） |
 | `SPEC.md` / `PROGRESS.md` | 規格與施工進度 |
 
 ## 啟動
@@ -30,5 +32,4 @@
 
 ## 當成獨立 repo 推上 GitHub
 本資料夾不含任何金鑰（`config.json` 已排除），可直接 `git init` 後推成自己的 repo（例：`git@github.com:boyinslps/grading-platform.git`）。
-- 完全自足：不需要「工作台」在同一台機器上跑。
-- 若把本資料夾搬離 `../工作台` 旁邊，`啟動評分平台.bat` 找不到 portable Python，請改用系統 Python 或自備。
+- 完全自足：連可攜式 Python 都在 `runtime/` 資料夾內自帶，複製整個資料夾（USB／換電腦）就能跑，不需要「工作台」在同一台機器上，也不需要另外裝 Python。

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>即時繳交</title>
+<style>
+  :root{--bg:#F6F7F9;--surface:#FFFFFF;--ink:#1E2430;--muted:#6B7280;--line2:#D1D5DB}
+  @media(prefers-color-scheme:dark){:root{--bg:#14171C;--surface:#1C2027;--ink:#F1F3F6;--muted:#9AA3AF;--line2:#333944}}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}
+  header{padding:16px 22px;border-bottom:1px solid var(--line2);display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px}
+  h1{margin:0;font-size:22px}
+  .meta{color:var(--muted);font-size:15px}
+  #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:14px;padding:22px}
+  .cell{text-align:center;padding:22px 6px;border-radius:14px;border:1px solid var(--line2);background:var(--surface);transition:background .15s,border-color .15s;cursor:pointer;user-select:none}
+  .cell.on{background:#F97316;border-color:#EA580C}
+  .cell.abs{background:#4B5563;border-color:#374151}
+  .num{font-weight:800;font-size:52px;line-height:1;color:var(--ink)}
+  .cell.on .num, .cell.abs .num{color:#fff}
+  .note{padding:22px;color:var(--muted);font-size:15px}
+  #pinBtn{border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer}
+  #pinBtn.on{background:#F97316;border-color:#EA580C;color:#fff}
+</style>
+</head>
+<body>
+<header>
+  <div><h1 id="title">即時繳交</h1><div class="meta" id="meta">載入中…</div></div>
+  <button id="pinBtn">📌 釘選在最上層</button>
+</header>
+<div id="grid"></div>
+
+<script>
+var params=new URLSearchParams(location.search);
+var cid=params.get('cid'), ws=params.get('ws');
+var firebaseConfig={
+  apiKey:"AIzaSyAaodBvsP-BSovON14izt22DOXeH40TTGM",
+  authDomain:"pcclass-94300.firebaseapp.com",
+  projectId:"pcclass-94300",
+  storageBucket:"pcclass-94300.firebasestorage.app",
+  messagingSenderId:"1034787516465",
+  appId:"1:1034787516465:web:73c334b2ddad152c472510"
+};
+function $(s){return document.querySelector(s)}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
+function loadScript(src){return new Promise(function(res,rej){var s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+
+// ---- 釘選在最上層：用 Document Picture-in-Picture，開一個真的會浮在所有視窗最上層的小視窗 ----
+var pipWin=null;
+function paintPip(){
+  if(!pipWin)return;
+  pipWin.document.getElementById('title').textContent=$('#title').textContent;
+  pipWin.document.getElementById('meta').textContent=$('#meta').textContent;
+  pipWin.document.getElementById('grid').innerHTML=$('#grid').innerHTML;
+}
+function togglePin(){
+  if(pipWin){pipWin.close();return;}
+  if(!('documentPictureInPicture' in window)){
+    alert('這個瀏覽器不支援「釘選在最上層」，需要 Chrome 或 Edge 116 以上版本。');
+    return;
+  }
+  documentPictureInPicture.requestWindow({width:480,height:420}).then(function(w){
+    pipWin=w;
+    var style=pipWin.document.createElement('style');
+    style.textContent=document.querySelector('style').textContent;
+    pipWin.document.head.appendChild(style);
+    pipWin.document.body.innerHTML='<header><h1 id="title"></h1><div class="meta" id="meta"></div></header><div id="grid"></div>';
+    if(window._onGridClick)pipWin.document.getElementById('grid').addEventListener('click',window._onGridClick);
+    $('#pinBtn').textContent='取消釘選';$('#pinBtn').classList.add('on');
+    paintPip();
+    pipWin.addEventListener('pagehide',function(){pipWin=null;$('#pinBtn').textContent='📌 釘選在最上層';$('#pinBtn').classList.remove('on');});
+  }).catch(function(e){alert('開啟失敗：'+e.message);});
+}
+$('#pinBtn').addEventListener('click',togglePin);
+
+if(!cid||!ws){
+  $('#meta').textContent='網址缺少班級或學習單參數，請從主畫面「🟢 即時繳交」按鈕開啟。';
+}else{
+  var base='https://www.gstatic.com/firebasejs/10.8.0/';
+  loadScript(base+'firebase-app-compat.js')
+    .then(function(){return loadScript(base+'firebase-auth-compat.js')})
+    .then(function(){return loadScript(base+'firebase-firestore-compat.js')})
+    .then(function(){
+      firebase.initializeApp(firebaseConfig);
+      var auth=firebase.auth(), db=firebase.firestore();
+      auth.onAuthStateChanged(function(u){
+        if(!u||!u.email){$('#meta').textContent='尚未登入教師帳號，請先在主視窗登入後再開啟這個視窗。';return;}
+        boot(db);
+      });
+    }).catch(function(e){$('#meta').textContent='載入 Firebase 失敗：'+e;});
+}
+
+function boot(db){
+  var course=null, roster=[], absentMap={}, curGot={}, absRef=null;
+  db.collection('courses').doc(cid).get().then(function(d){
+    course=d.exists?Object.assign({id:d.id},d.data()):null;
+    $('#title').textContent='即時繳交 · '+(course?course.name:cid);
+    absRef=db.collection('courses').doc(cid).collection('absences').doc(ws);
+    return Promise.all([db.collection('courses').doc(cid).collection('students').get(), absRef.get()]);
+  }).then(function(r){
+    r[0].forEach(function(d){roster.push(Object.assign({id:d.id},d.data()))});
+    roster.sort(function(a,b){return (a.seatNo||0)-(b.seatNo||0)});
+    absentMap=(r[1].exists?r[1].data():{})||{};
+    render(curGot);
+    // 只用 worksheetId 單一等式過濾（不需要複合索引），班級/年級收到資料後在前端比對
+    db.collection('submissions').where('worksheetId','==',ws).onSnapshot(function(qs2){
+      var got={};qs2.forEach(function(d){var s=d.data();
+        if(course&&s.grade===course.grade&&s.className===course.className&&s.studentId!=null)got[s.studentId]=true;});
+      curGot=got;
+      render(got);
+    },function(e){$('#meta').textContent='讀取失敗：'+e.message;});
+  }).catch(function(e){$('#meta').textContent='讀取名單失敗：'+e.message;});
+
+  // 座號、人數上限一律照班級名單走（名單有跳號就跳號，不硬湊連續號碼）
+  function render(gotMap){
+    curGot=gotMap;
+    var got=roster.filter(function(r){return gotMap[r.seatNo]}).length;
+    $('#meta').textContent=(roster.length?('已收到 '+got+' / '+roster.length):'這個班級還沒有名單')+'　（每次有學生繳交會自動更新；點座號可標記請假）';
+    document.title='即時繳交 ('+got+'/'+roster.length+')';
+    if(!roster.length){$('#grid').innerHTML='<div class="note">到主畫面「編輯名單」先建立這個班級的座號。</div>';paintPip();return;}
+    $('#grid').innerHTML=roster.map(function(r){
+      var on=!!gotMap[r.seatNo];
+      var abs=!on&&!!absentMap[r.seatNo];
+      return '<div class="cell'+(on?' on':(abs?' abs':''))+'" data-seat="'+r.seatNo+'"><div class="num">'+esc(r.seatNo)+'</div></div>';
+    }).join('');
+    paintPip();
+  }
+
+  // 老師手動點擊：標記／取消「請假」（跟已繳交是各自獨立的狀態，寫進 courses/{cid}/absences/{ws}，重開視窗也會記得）
+  function onGridClick(e){
+    var cell=e.target.closest('.cell');if(!cell)return;
+    var seat=cell.dataset.seat;if(!seat)return;
+    var next=!absentMap[seat];
+    if(next)absentMap[seat]=true;else delete absentMap[seat];
+    render(curGot);
+    var patch={};patch[seat]=next?true:firebase.firestore.FieldValue.delete();
+    if(absRef)absRef.set(patch,{merge:true}).catch(function(){});
+  }
+  $('#grid').addEventListener('click',onGridClick);
+  window._onGridClick=onGridClick;   // 給釘選視窗（另一個 document）綁同一個處理函式用
+}
+</script>
+</body>
+</html>
