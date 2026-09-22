@@ -6,10 +6,13 @@
 並且**自帶一份 Google Classroom 授權與 AI 評分後端**，讓評分平台不必依賴「工作台」
 （8770）就能獨立運作——設定存在本資料夾自己的 config.json，跟工作台的設定各自獨立。
 """
-import json, re, io, base64, zipfile, mimetypes, urllib.request, urllib.parse, time
+import json, re, io, sys, base64, zipfile, mimetypes, urllib.request, urllib.parse, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+# 隨附的可攜式 Python 用 ._pth 鎖死 sys.path（只有直譯器自己那個資料夾，不含這個腳本的資料夾），
+# import updater 在這種環境下預設會找不到模組——先把腳本自己的資料夾加進 sys.path。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import updater   # 自動更新（見 updater.py／《自動更新規範》）
 
 HERE = Path(__file__).resolve().parent
