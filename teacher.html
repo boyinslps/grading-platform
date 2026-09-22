@@ -38,7 +38,23 @@
   input,select,textarea{background:var(--surface);color:var(--ink)}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter','Noto Sans TC',system-ui,sans-serif;font-size:14px;line-height:1.5}
   button{font-family:inherit;cursor:pointer}
-  .app{display:grid;grid-template-rows:auto 1fr;height:100vh}
+  .app{display:grid;grid-template-rows:auto auto 1fr;height:100vh}
+  /* 頂端「上課」黑底列：固定深色（不跟著淺色/深色模式變），跟下面的學習單管理明確分區 */
+  .nowBar{background:#0E1015;color:#F4F5F7;padding:14px 20px;border-bottom:3px solid #000}
+  .nowBar .nowEyebrow{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#818CF8}
+  .nowBar .nowWhen{font-size:12px;color:#9AA3B8;margin-top:2px}
+  .nowBar .nowClass{font-size:19px;font-weight:700;margin:3px 0 4px;color:#fff}
+  .nowBar .nowWs{font-size:12px;color:#C7CBD6}
+  .nowBar select{font-size:13px;font-weight:600;border:1px solid #3A3F4E;background:#1B1E27;color:#F4F5F7;border-radius:8px;padding:7px 11px;max-width:230px}
+  .nowBar .btn{background:#20232D;border-color:#3A3F4E;color:#F4F5F7}
+  .nowBar .btn:hover{background:#2A2E3A}
+  .nowBar .btn-primary{background:#4F46E5;border-color:#4F46E5;color:#fff}
+  .nowBar .btn-primary:hover{background:#4338CA}
+  .nowBar .btn:disabled{opacity:.4}
+  .nowBar .chip{background:#1B1E27;border-color:#3A3F4E;color:#F4F5F7}
+  .nowBar .chip:hover{background:#2A2E3A}
+  .nowBar .chip.on{background:#4F46E5;border-color:#4F46E5;color:#fff}
+  .nowBar .note{color:#9AA3B8}
   .topbar{display:flex;align-items:center;gap:14px;padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--line)}
   .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700}
   .brand b{font-size:15px;font-weight:700}.brand span{display:block;font-size:11px;color:var(--muted)}
@@ -156,6 +172,23 @@
 })();
 </script>
 <div class="app">
+  <!-- 現在這節：依課表＋當下星期/時間推出來。放最頂端、黑底跟下面的學習單管理區隔開——
+       上面是「上課」（切班級＋開本節學習單），下面才是「學習單管理」（選學習單、設定、批改、成績）。 -->
+  <div class="nowBar" id="nowCard" hidden>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <div style="flex:1;min-width:230px">
+        <div class="nowEyebrow">🎓 現在上課</div>
+        <div class="nowWhen" id="nowWhen">—</div>
+        <div class="nowClass" id="nowClass">—</div>
+        <div class="nowWs" id="nowWs"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="nowWsSel"><option value="">本週學習單…</option></select>
+        <button class="btn btn-primary" id="startClassBtn">上課</button>
+      </div>
+    </div>
+    <div id="todayRow" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px"></div>
+  </div>
   <header class="topbar">
     <div class="logo">評</div>
     <div class="brand"><b>評分平台</b><span>課堂評量與成績管理</span></div>
@@ -236,22 +269,6 @@
         <div id="rubricBox"></div>
         <div class="note" id="rubricTotalNote" style="margin-top:6px"></div>
         <div class="note" id="settingsNote"></div>
-      </div>
-
-      <!-- 現在這節：依課表＋當下星期/時間推出來。「上課」＝切到該班級與本週學習單＋開學習單 Admin＋開即時繳交視窗 -->
-      <div class="card" id="nowCard" hidden style="margin-bottom:18px;padding:14px 18px">
-        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-          <div style="flex:1;min-width:230px">
-            <div style="font-size:12px;color:var(--muted)" id="nowWhen">—</div>
-            <div style="font-size:19px;font-weight:700;margin:3px 0 4px" id="nowClass">—</div>
-            <div class="note" id="nowWs" style="margin:0"></div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <select id="nowWsSel" style="font-size:13px;font-weight:600;border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:8px;padding:7px 11px;max-width:230px"><option value="">本週學習單…</option></select>
-            <button class="btn btn-primary" id="startClassBtn">上課</button>
-          </div>
-        </div>
-        <div id="todayRow" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px"></div>
       </div>
 
       <div class="tiles">
