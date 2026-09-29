@@ -26,6 +26,7 @@ service cloud.firestore {
         allow read: if true;
         allow create, update: if request.auth != null
                               && request.auth.uid == uid;
+        allow delete: if isTeacher();        // 老師按「還原」時清空全班投票
       }
     }
 
