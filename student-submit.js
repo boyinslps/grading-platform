@@ -20,7 +20,7 @@
    識別列：年級/班級/學號，一律數字，自動注入頁面最上方（<body> 第一個子節點前），存 localStorage。
    繳交資料：submissions/{worksheetId}__{grade}-{className}-{studentId}
      { worksheetId, worksheetTitle, lessonPath, grade, className, studentId,
-       answers, qtypes, scoreAnswers, experienceAnswers, openAnswers,
+       answers, qtypes, qtexts(選填), scoreAnswers, experienceAnswers, openAnswers,
        accuracyRate, experienceCompletion, status:'submitted', submittedAt }
    ============================================================ */
 (function (global) {
@@ -88,9 +88,10 @@
   // ===== 題型自動收集：掃 [data-qid][data-qtype]（見資料規範 §2）=====
   function safeVal(v){return v===undefined?null:v;}
   function autoCollect(){
-    var scoreAnswers={}, experienceAnswers={}, openAnswers={}, answers={}, qtypes={};
+    var scoreAnswers={}, experienceAnswers={}, openAnswers={}, answers={}, qtypes={}, qtexts={};
     document.querySelectorAll('[data-qid]').forEach(function(el){
       var q=el.getAttribute('data-qid'), qtype=el.getAttribute('data-qtype')||'open';
+      if(el.getAttribute('data-qtext')) qtexts[q]=el.getAttribute('data-qtext');   // 題幹：給評分平台與 AI 看（見資料規範 §3）
       var given=null;
       var tag=el.tagName.toLowerCase();
       if(tag==='input'||tag==='textarea'||tag==='select'){
@@ -110,11 +111,13 @@
       if(qtype==='open'){ openAnswers[q]=given; return; }
       var correctRaw=el.getAttribute('data-correct');
       var correct=correctRaw==null?null:(correctRaw.indexOf('、')>=0?correctRaw.split('、'):correctRaw);
-      var rec={given:given, correct:correct, isCorrect: (correct==null||given==null)?false:(norm(given)===norm(correct))};
+      var answered=given!=null && given!=='' && !(Array.isArray(given)&&!given.length);
+      // 體驗題沒設 data-correct＝不判對錯，有作答就算完成（見資料規範 §3）；檢測題沒設正解一律 false
+      var rec={given:given, correct:correct, isCorrect: correct==null ? (qtype==='experience'&&answered) : (given!=null&&norm(given)===norm(correct))};
       if(qtype==='score')experienceOrScore(scoreAnswers,q,rec); else experienceOrScore(experienceAnswers,q,rec);
     });
     function experienceOrScore(bucket,q,rec){bucket[q]=rec;}
-    return {answers:answers, qtypes:qtypes, scoreAnswers:scoreAnswers, experienceAnswers:experienceAnswers, openAnswers:openAnswers};
+    return {answers:answers, qtypes:qtypes, qtexts:qtexts, scoreAnswers:scoreAnswers, experienceAnswers:experienceAnswers, openAnswers:openAnswers};
   }
   function computeStats(cats){
     var sKeys=Object.keys(cats.scoreAnswers), eKeys=Object.keys(cats.experienceAnswers);
@@ -169,6 +172,7 @@
         scoreAnswers:cats.scoreAnswers,experienceAnswers:cats.experienceAnswers,openAnswers:cats.openAnswers,
         accuracyRate:st.accuracyRate,experienceCompletion:st.experienceCompletion,
         status:'submitted',submittedAt:global.firebase.firestore.FieldValue.serverTimestamp()};
+      if(cats.qtexts&&Object.keys(cats.qtexts).length)payload.qtexts=cats.qtexts;
       var btn=wrap.querySelector('#ssb-go');btn.disabled=true;stat.style.color='#4f46e5';stat.textContent='繳交中…';
       var write=function(){return db.collection('submissions').doc(docId).set(payload,{merge:true});};
       var p=auth?ensureAuth(auth).then(write):write();

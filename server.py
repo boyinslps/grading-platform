@@ -6,7 +6,8 @@
 並且**自帶一份 Google Classroom 授權與 AI 評分後端**，讓評分平台不必依賴「工作台」
 （8770）就能獨立運作——設定存在本資料夾自己的 config.json，跟工作台的設定各自獨立。
 """
-import json, re, io, sys, base64, zipfile, mimetypes, urllib.request, urllib.parse, time
+import json, re, io, sys, math, base64, zipfile, mimetypes, unicodedata, urllib.request, urllib.parse, time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -23,6 +24,7 @@ GOOGLE_SCOPES = " ".join([
     "https://www.googleapis.com/auth/classroom.courses.readonly",
     "https://www.googleapis.com/auth/classroom.coursework.students",
     "https://www.googleapis.com/auth/classroom.rosters.readonly",
+    "https://www.googleapis.com/auth/classroom.announcements",   # 繳交紀錄「發布缺交名單」（2026-09-29 加，舊授權要重新授權一次）
 ])
 
 
@@ -221,346 +223,690 @@ def _norm(v):
     return str(v).strip().lower()
 
 
-# ========== AI 評分總則（最上級評分規範）==========
-# 每次呼叫 AI 評分都會先插入這一段，再接該份學習單自己的「評分規準」。
-# 教師可在「設定 → AI 評分 → 評分總則」自行修改，改過的存在 config.json 的 grade_master_rubric；
-# 留空＝用下面這份預設。規範原文同步維護在 ../引導規範/AI評分規範.md。
-DEFAULT_MASTER_RUBRIC = """【評分總則】
-1. 給分上限：你能給的最高分＝下方「評分規準」各項配分的總和（本次上限為 {max} 分），任何情況都不可超過，也不要自己換算成百分制。
-2. 相對表現（重點）：同一批是同一個班級的作答，請先看完全部，再依「和同儕比的突出程度」給分——以這批作答的平均水準當基準線，明顯比多數人具體、完整、有自己觀察的往上拉，只有一兩句、照抄題目或含糊其辭的往下壓。**不要因為人數多就每個人給差不多的分數**，分數該拉開就要拉開，讓高低差看得出來。
-3. 沒作答＝0 分：空白、只有標點或無意義字元、與題目完全無關的亂打，一律 0 分，不給同情分。
-4. 評分依序看：有沒有回答到題目問的 → 內容是否具體（有例子、理由或自己的觀察） → 是否有自己的想法。**不是看字數多寡或用詞華麗**。
-5. 對象是國小學生：語氣鼓勵但誠實；回饋要具體可行（指出一個還可以再補上的點），不要只說「很棒」這種空話。"""
+# ========== AI 評分（通用引擎；規範見 ../引導規範/AI評分規範.md）==========
+# 每一題開放題有自己的「題目規格」（題幹＋評分方式＋標準＋配分，存在 worksheets/{id}.questions）。
+# AI 只負責「判斷」，分數一律由伺服器依規格計算，所以：
+#   - 每題得分不可能超過該題配分；開放題總分＝各題加總（不是平均）。
+#   - 同一題裡正規化後相同的作答只送一次、必得同分。
+# 三種評分方式：
+#   condition 條件查核：學生列出 N 個項目，AI 只回答每個項目符不符合條件；判定結果存成「判定紀錄」，
+#                      之後任何班級遇到同一個項目直接沿用，老師改一次就全部套用。
+#   checklist 檢核點：AI 逐項判斷有沒有做到（要附學生原文當證據），分數＝做到的檢核點配分加總。
+#   levels    分級：AI 給 0～4 級，分數＝配分×等級÷4。可選「班級相對」：先從這班的作答挑出錨點，
+#                  再對照錨點分級；錨點存起來，同班重評或補交都用同一組尺標。
+
+DEFAULT_MASTER_RUBRIC = """【評分總則】（每一題都適用；各題的配分、評分方式與標準列在題目下方）
+1. 只依照該題列出的評分標準或檢核點判斷，不要自己追加標準；不看字數多寡、用詞華麗。
+2. 內容相同或意思相同的作答，必須得到相同的判斷結果。
+3. 與題目完全無關的亂打、只抄題目，視為沒有達成任何標準。
+4. 對象是國小學生：回饋語氣鼓勵但誠實，要具體可行（指出一個還可以補上的點），不要只說「很棒」這種空話。"""
+
+LEVEL_TOP = 4
+DEFAULT_POINTS = 10
+BONUS_DEFAULT_POINTS = 3
+MODES = ("levels", "checklist", "condition")
+CHUNK_ANSWERS = 40
+CHUNK_PIECES = 60
+ANCHOR_SAVE_MIN = 5   # 不同作答少於這個數量時挑出的錨點不存（樣本太少，存了會讓之後全班都被小樣本的尺標綁住）
+BLANK_NOTE = "這次沒有作答，先把想法寫下來就有分數了。"
+DEFAULT_STANDARD = "有沒有回答到題目問的；內容是否具體（有例子、理由或自己的觀察）；是否有自己的想法。"
 
 
-def master_rubric(ai_max):
-    """取教師自訂的評分總則（沒填就用預設），並把本次的給分上限填進去。"""
+def master_rubric(points=None):
+    """教師自訂的評分總則（沒填用預設）；{max} 換成這一題的配分。"""
     tpl = (read_config().get("grade_master_rubric") or "").strip() or DEFAULT_MASTER_RUBRIC
-    return tpl.replace("{max}", str(ai_max))
+    return tpl.replace("{max}", str(points) if points is not None else "")
 
 
-def _rubric_total(rubric):
-    """評分規準（開放題用）各項配分總和＝AI 給分上限；沒有規準時退回 100。"""
-    total = 0.0
-    for c in ((rubric or {}).get("criteria") or []):
-        try:
-            total += float(c.get("points") or 0)
-        except Exception:
-            pass
-    total = int(round(total))
-    return total if total > 0 else 100
+def _half_up(x):
+    return int(math.floor(float(x) + 0.5))
 
 
-def _rubric_text(rubric, ai_max):
-    if rubric and rubric.get("criteria"):
-        return ("評分規準（各項配分加總＝上限 %d 分）：\n" % ai_max) + "\n".join(
-            f"- {c.get('name','')}（{c.get('points','')} 分）：{c.get('desc','')}" for c in rubric["criteria"])
-    return "評分規準：這份學習單沒有另外訂規準，請就『有沒有回答到題目、內容具體程度、是否有自己的想法』給 0–%d 分。" % ai_max
+def _num(v):
+    try:
+        f = float(v)
+        return f if f == f else None
+    except Exception:
+        return None
 
 
-def _open_qid_note(main_items, bonus_items):
-    """列在評分規準前面：這次送評的開放題／開放加分題各有哪些編號（qid），
-    讓 AI 在看規準之前就先知道要分辨的題目範圍（2026-09-16 教師指定）。
-    main_items/bonus_items 為空的那一類就不提，兩者都空就整段不輸出。"""
-    parts = []
-    if main_items:
-        parts.append("主要開放題＝" + "、".join(main_items.keys()))
-    if bonus_items:
-        parts.append("加分題＝" + "、".join(bonus_items.keys()))
-    if not parts:
-        return ""
-    caveat = "（下面規準的給分上限只適用於主要開放題；加分題不算進規準，另外用 0～3 分尺規評）" if bonus_items else ""
-    return "本次開放題編號：" + "；".join(parts) + caveat + "\n\n"
+def _ans_text(v):
+    if isinstance(v, list):
+        return "、".join(str(x) for x in v if x is not None)
+    return "" if v is None else str(v)
+
+
+def _norm_key(v):
+    """比對用的正規化：全半形統一、英文小寫、去掉空白與標點。相同 key＝視為相同作答。"""
+    s = unicodedata.normalize("NFKC", str(v or "")).lower()
+    return re.sub(r"[\s\W_]+", "", s, flags=re.U)
 
 
 def _is_blank(v):
-    """空白／只有標點空格＝沒作答（評分總則第 3 點，由伺服器直接判定，不交給 AI 判斷）。"""
-    return not re.sub(r'[\s\W_]+', '', str(v or ''), flags=re.U)
+    """空白／只有標點空格＝沒作答（伺服器直接判 0 分，不送 AI）。"""
+    return not _norm_key(_ans_text(v))
 
 
-def _split_open(open_items, bonus_qids):
-    """把開放題答案拆成「主要」與「加分」兩組（見《學習單資料與提交規範》§2-b：
-    加分題仍是 open 型，只是另外被 bonusQids 標記，一樣要送 AI，只是分開算分、獨立疊加）。"""
-    bonus_qids = set(bonus_qids or [])
-    main = {q: a for q, a in (open_items or {}).items() if q not in bonus_qids}
-    bonus = {q: a for q, a in (open_items or {}).items() if q in bonus_qids}
-    return main, bonus
+def _legacy_rubric_points(rubric):
+    total = 0.0
+    for c in ((rubric or {}).get("criteria") or []):
+        total += max(0.0, _num(c.get("points")) or 0.0)
+    return _half_up(total) if total > 0 else None
 
 
-def _ai_grade(open_items, rubric, questions, bonus_qids=None, overview=None):
-    """開放題逐題各自打分（2026-09-16 教師指定）：主要開放題每題各評 0～ai_max
-    （同一份規準獨立套用在每一題上，group 總分＝各題平均，見《AI評分規範》§7）；
-    加分題每題各評 0～3，group 總分＝各題相加（維持既有的疊加式加分）。
-    沒作答的題目不送進 prompt（省 token，也不拖累相對比較），直接記 0 分。"""
-    qmap = {q.get("qid"): q for q in (questions or [])}
-    ai_max = _rubric_total(rubric)
-    main_items, bonus_items = _split_open(open_items, bonus_qids)
-    has_main, has_bonus = bool(main_items), bool(bonus_items)
-    main_ask = {q: a for q, a in main_items.items() if not _is_blank(a)}
-    bonus_ask = {q: a for q, a in bonus_items.items() if not _is_blank(a)}
-    # 全部（主要＋加分）都空白 → 不必呼叫 AI，直接每題 0 分（評分總則第 3 點）
-    if not main_ask and not bonus_ask:
-        scores = {q: 0 for q in main_items} if has_main else None
-        bonus_scores = {q: 0 for q in bonus_items} if has_bonus else None
-        return {"ok": True, "score": 0 if has_main else None, "bonusScore": 0 if has_bonus else None,
-                "scores": scores, "bonusScores": bonus_scores,
-                "feedback": "這次沒有作答，先把想法寫下來就有分數了。", "aiMax": ai_max}
+def _legacy_rubric_standard(rubric):
+    lines = []
+    for c in ((rubric or {}).get("criteria") or []):
+        n, d = str(c.get("name") or "").strip(), str(c.get("desc") or "").strip()
+        if n or d:
+            lines.append(f"{n}：{d}" if n and d else (n or d))
+    return "；".join(lines)
 
-    def block_of(qid, ans):
-        pq = (qmap.get(qid, {}) or {}).get("prompt", "")
-        return f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}"
 
-    schema_fields = []
-    if main_ask:
-        schema_fields.append('"scores":{' + ",".join(f'"{q}":<0到{ai_max}整數>' for q in main_ask) + '}')
-    if bonus_ask:
-        schema_fields.append('"bonusScores":{' + ",".join(f'"{q}":<0到3整數>' for q in bonus_ask) + '}')
-    schema_fields.append('"feedback":"<給學生的兩三句中文回饋，整體性的，不用逐題各寫一段>"')
-    qid_note = _open_qid_note(main_ask, bonus_ask)
-    overview_block = (str(overview).strip() + "\n\n") if overview and str(overview).strip() else ""
-    prompt = "你是國小資訊課的閱卷老師。請依下列總則與規準，對每一題開放題各自獨立評分（不是全部加在一起給一個分數）。\n\n" + overview_block + master_rubric(ai_max) + "\n\n" + qid_note + _rubric_text(rubric, ai_max)
-    if main_ask:
-        prompt += "\n\n【主要開放題，每題各自依規準給 0～%d 分】\n" % ai_max + "\n\n".join(block_of(q, a) for q, a in main_ask.items())
-    if bonus_ask:
-        prompt += (
-            "\n\n【加分題，獨立於主要分數之外，額外加分用，不算進上面的評分規準；每題各自依內容完整度給 0～3 分】\n"
-            "完全沒寫或跟題目無關給 0，只有一兩句、籠統帶過給 1，內容完整合理給 2，具體、有自己觀察或例子給 3。\n"
-            + "\n\n".join(block_of(q, a) for q, a in bonus_ask.items())
-        )
-    prompt += '\n\n只輸出 JSON（無多餘文字、無程式碼圍欄）：{' + ",".join(schema_fields) + '}'
+def build_spec(qid, raw, rubric=None, is_bonus=False):
+    """把教師設定的題目規格補齊成引擎用的完整形狀。舊資料（沒有 mode／points）一律當 levels，
+    標準沿用舊的整份評分規準，配分沿用規準總分——舊學習單不用改設定也能評。"""
+    raw = raw if isinstance(raw, dict) else {}
+    mode = raw.get("mode") if raw.get("mode") in MODES else "levels"
+    checks = []
+    for c in (raw.get("checks") or []):
+        if not isinstance(c, dict):
+            continue
+        desc, pts = str(c.get("desc") or "").strip(), _num(c.get("pts"))
+        if desc and pts and pts > 0:
+            checks.append({"id": f"c{len(checks) + 1}", "desc": desc, "pts": _half_up(pts)})
+    conditions = [str(c).strip() for c in (raw.get("conditions") or []) if str(c).strip()]
+    if mode == "checklist" and not checks:
+        mode = "levels"
+    if mode == "condition" and not conditions:
+        mode = "levels"
+    points = sum(c["pts"] for c in checks) if mode == "checklist" else _num(raw.get("points"))
+    if not points or points <= 0:
+        points = BONUS_DEFAULT_POINTS if is_bonus else (_legacy_rubric_points(rubric) or DEFAULT_POINTS)
+    standard = str(raw.get("standard") or "").strip()
+    if not standard and not is_bonus:
+        standard = _legacy_rubric_standard(rubric)
+    relative = raw.get("relative")
+    relative = (not is_bonus) if relative is None else bool(relative)
+    need = _num(raw.get("need"))
+    return {
+        "qid": qid, "prompt": str(raw.get("prompt") or "").strip(), "mode": mode,
+        "points": max(1, _half_up(points)), "standard": standard or DEFAULT_STANDARD,
+        "relative": relative, "need": max(1, _half_up(need)) if need else 1,
+        "conditions": conditions, "basis": str(raw.get("basis") or "").strip(),
+        "checks": checks, "bonus": bool(is_bonus),
+    }
+
+
+def _ask_json(prompt):
     r = grade_call(prompt)
     if not r.get("ok"):
-        return {"ok": False, "error": r.get("error", "AI 呼叫失敗")}
-    m = re.search(r'\{.*\}', r.get("text", ""), re.S)
+        return None, r.get("error") or "AI 呼叫失敗"
+    txt = (r.get("text") or "").strip()
+    m = re.search(r"\{.*\}", txt, re.S)
     if not m:
-        return {"ok": False, "error": "AI 未回傳 JSON：" + r.get("text", "")[:200]}
+        return None, "AI 未回傳 JSON：" + txt[:200]
     try:
         d = json.loads(m.group(0))
     except Exception as e:
-        return {"ok": False, "error": f"JSON 解析失敗：{e}"}
-    # 上限由伺服器強制夾住，不靠 AI 自律（評分總則第 1 點）；沒作答的題目不論 AI 說什麼，一律覆蓋成 0
-    def clamp(v, hi):
-        try:
-            return max(0, min(hi, round(float(v))))
-        except Exception:
-            return None
-    d_scores = d.get("scores") if isinstance(d.get("scores"), dict) else {}
-    d_bonus = d.get("bonusScores") if isinstance(d.get("bonusScores"), dict) else {}
-    scores, bonus_scores = None, None
-    if has_main:
-        scores = {}
-        for q in main_items:
-            if q not in main_ask:
-                scores[q] = 0
-            else:
-                v = clamp(d_scores.get(q), ai_max)
-                if v is None:
-                    return {"ok": False, "error": f"AI 沒有給題號 {q} 合法的分數"}
-                scores[q] = v
-    if has_bonus:
-        bonus_scores = {}
-        for q in bonus_items:
-            if q not in bonus_ask:
-                bonus_scores[q] = 0
-            else:
-                v = clamp(d_bonus.get(q), 3)
-                bonus_scores[q] = v if v is not None else 0
-    score = round(sum(scores.values()) / len(scores)) if scores else None
-    bonus_score = sum(bonus_scores.values()) if bonus_scores is not None else None
-    return {"ok": True, "score": score, "bonusScore": bonus_score, "scores": scores, "bonusScores": bonus_scores,
-            "feedback": d.get("feedback", ""), "aiMax": ai_max}
+        return None, f"JSON 解析失敗：{e}"
+    if not isinstance(d, dict):
+        return None, "AI 回傳的不是 JSON 物件"
+    return d, None
 
 
-def _ai_grade_batch(items, rubric, questions, want_feedback, bonus_qids=None, overview=None):
-    """整批（同一班）一次 AI 呼叫評完，不是逐筆呼叫 /api/grade。
-    items: [{"key":<submission id>, "answers":{qid:text,...}}, ...]
-    回傳 {"ok":True,"results":{key:{"score":?,"bonusScore":?,"scores":{qid:分數},"bonusScores":{qid:分數},
-                                    "feedback":str}},"missing":[key,...]} 或 {"ok":False,"error":...}
-    開放題逐題各自打分（2026-09-16 教師指定，見 _ai_grade 同一套邏輯）：主要開放題每題各 0～ai_max，
-    group 總分＝各題平均；加分題每題各 0～3，group 總分＝各題相加（疊加式加分）。
-    加分題（bonus_qids 標記的 qid）跟主要開放題一起送 AI，但分開算分、分開回傳（見《學習單資料與提交規範》§2-b）。
-    """
-    if not items:
-        return {"ok": True, "results": {}, "missing": [], "aiMax": _rubric_total(rubric)}
-    qmap = {q.get("qid"): q for q in (questions or [])}
-    ai_max = _rubric_total(rubric)
+def _ask_for(aliases, make_prompt, validate, on_response=None):
+    """問 AI 並逐一驗證每個代號的回覆；沒回來或格式不對的代號再問一次（只問缺的）。
+    回傳 ({代號: 驗證後的值}, 錯誤訊息或 None)。"""
+    got, err, todo = {}, None, list(aliases)
+    for _ in range(2):
+        if not todo:
+            break
+        d, e = _ask_json(make_prompt(todo))
+        if d is None:
+            err = e
+            continue
+        if on_response:
+            on_response(d, todo)
+        for a in todo:
+            v = validate(a, d.get(a))
+            if v is not None:
+                got[a] = v
+        todo = [a for a in todo if a not in got]
+        err = ("AI 漏回 %d 份作答" % len(todo)) if todo else None
+    return got, err
 
-    def parts(it):
-        main, bonus = _split_open(it.get("answers"), bonus_qids)
-        main_ask = {q: a for q, a in main.items() if not _is_blank(a)}
-        bonus_ask = {q: a for q, a in bonus.items() if not _is_blank(a)}
-        return main, bonus, main_ask, bonus_ask
 
-    # 完全沒作答（主要＋加分都空白）的先挑出來直接每題 0 分（評分總則第 3 點）：不送進 prompt，省 token，
-    # 也不會讓一堆空白作答拉低 AI 對「這批平均水準」的判斷（第 2 點的相對比較只看有寫的人）。
-    results, graded = {}, []
-    for it in items:
-        main, bonus, main_ask, bonus_ask = parts(it)
-        if not main_ask and not bonus_ask:
-            entry = {}
-            if main: entry["score"] = 0; entry["scores"] = {q: 0 for q in main}
-            if bonus: entry["bonusScore"] = 0; entry["bonusScores"] = {q: 0 for q in bonus}
-            if want_feedback: entry["feedback"] = "這次沒有作答，先把想法寫下來就有分數了。"
-            results[it["key"]] = entry
-        else:
-            graded.append((it, main, bonus, main_ask, bonus_ask))
-    if not graded:
-        return {"ok": True, "results": results, "missing": [], "aiMax": ai_max}
-    # 用短代號（k0、k1…）當 JSON 鍵，不直接把 Firestore doc id 塞進 prompt——
-    # 代號在伺服器端跟 key 一一對應，回來再換回去，不必擔心 doc id 裡的符號讓 AI 產生非法 JSON 鍵名。
-    aliases = [f"k{i}" for i in range(len(graded))]
-    # 整批共用一份規準，所以在規準前面列的是這份學習單這批人「出現過」的開放題／加分題編號聯集，
-    # 不是逐生列（逐生的 qid 已經在各自的【kN】區塊裡標了）。
-    all_main_qids, all_bonus_qids = {}, {}
-    for (it, main, bonus, main_ask, bonus_ask) in graded:
-        for q in main_ask: all_main_qids.setdefault(q, True)
-        for q in bonus_ask: all_bonus_qids.setdefault(q, True)
-    qid_note = _open_qid_note(all_main_qids, all_bonus_qids)
-    blocks = []
-    any_bonus_asked = False
-    for alias, (it, main, bonus, main_ask, bonus_ask) in zip(aliases, graded):
-        lines = [f"【{alias}】"]
-        if main_ask:
-            lines.append("主要開放題（每題各自依規準給 0～%d 分）：" % ai_max)
-            for qid, ans in main_ask.items():
-                pq = (qmap.get(qid, {}) or {}).get("prompt", "")
-                lines.append(f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}")
-        if bonus_ask:
-            any_bonus_asked = True
-            lines.append("加分題（獨立於主要分數之外，每題各自給 0～3 分）：")
-            for qid, ans in bonus_ask.items():
-                pq = (qmap.get(qid, {}) or {}).get("prompt", "")
-                lines.append(f"[{qid}] 題目：{pq or '(無題幹)'}\n學生作答：{ans}")
-        blocks.append("\n".join(lines))
-    feedback_field = ',"feedback":"<給這位學生的兩三句中文回饋，整體性的>"' if want_feedback else ""
-    bonus_field = ',"bonusScores":{"<qid>":<0到3整數,該生每個有作答的加分題各一個>}' if any_bonus_asked else ""
-    schema = ("{" + f'"{aliases[0]}":{{"scores":{{"<qid>":<0到{ai_max}整數,該生每個有作答的主要開放題各一個}}}}'
-              f'{bonus_field}{feedback_field}}}' + ",...}")
-    overview_block = (str(overview).strip() + "\n\n") if overview and str(overview).strip() else ""
-    prompt = (
-        "你是國小資訊課的閱卷老師。以下是同一個班級、同一份學習單裡多位學生的開放題作答，請依下列總則與規準逐一評分，"
-        "且對每一題開放題各自獨立評分（不是把一位學生的所有題目加在一起給一個分數）。\n"
-        "每位學生的作答可能分成「主要開放題」與「加分題」：主要開放題依評分規準評分；"
-        "加分題獨立於主要分數之外，依內容完整度給 0～3 分（完全沒寫或跟題目無關 0 分，"
-        "只有一兩句、籠統帶過 1 分，內容完整合理 2 分，具體、有自己觀察或例子 3 分）。\n\n"
-        + overview_block + master_rubric(ai_max) + "\n\n" + qid_note
-        + _rubric_text(rubric, ai_max) + "\n\n" + "\n\n".join(blocks) +
-        "\n\n只輸出一個 JSON 物件（無多餘文字、無程式碼圍欄），"
-        f"每位學生都要用【】裡的代號當鍵名、一個不漏，鍵名要用學生上面實際列出的 qid，格式例如：{schema}"
+def _q_header(spec, overview):
+    parts = []
+    ov = str(overview or "").strip()
+    if ov:
+        parts.append("【學習單背景】\n" + ov[:1500])
+    parts.append(f"【題目 {spec['qid']}】{spec['prompt'] or '（未提供題幹，請從作答內容推斷題意）'}")
+    return "\n\n".join(parts)
+
+
+def _answers_block(aliases, amap):
+    return "\n".join(f"[{a}] {amap[a]}" for a in aliases)
+
+
+# ---------- condition：條件查核 ----------
+def _split_pieces(text):
+    out = []
+    for p in re.split(r"[、,，;；/／|｜\n\r\t]+|\s+|以及", str(text or "")):
+        p = p.strip(" 　.。!！?？:：()（）[]【】「」『』\"'“”‘’-－~～")
+        if _norm_key(p):
+            out.append(p)
+    return out
+
+
+def _condition_prompt(spec, overview, known, aliases, amap):
+    conds = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(spec["conditions"]))
+    known_line = ("【已知正式名稱】片段指的是其中之一時，name 請用完全相同的寫法：" + "、".join(known[:200]) + "\n\n") if known else ""
+    return (
+        "你是事實查核助手，協助國小老師檢查學生在查資料題寫下的項目是否符合題目條件。你只判斷事實，不評分、不寫回饋。\n\n"
+        + _q_header(spec, overview) + "\n\n"
+        + "【條件】項目要「全部」符合：\n" + conds + "\n"
+        + "【判斷依據】" + (spec["basis"] or "以一般公開資料為準") + "\n\n"
+        + known_line
+        + "以下是學生寫的片段（p0、p1…），每個片段可能是：一個名稱、好幾個名稱連在一起、錯字或簡稱、或根本不是具體項目。\n"
+        "對每個片段：\n"
+        "- 找出它指的具體項目，name 用正式全名（錯字、簡稱還原成正式名稱；同一個項目不同寫法要用同一個 name）。\n"
+        "- ok：符合全部條件填 true；不符合填 false；沒有把握或查不到這個項目填 null。不確定一定要填 null，不要猜。\n"
+        "- why：10 字內的理由（不符合時說明哪個條件不符）。\n"
+        "- 片段不是任何具體項目（亂打、只寫類別或地區）就回空陣列 []。\n\n"
+        + _answers_block(aliases, amap) + "\n\n"
+        '只輸出 JSON（不要多餘文字、不要程式碼圍欄）：{"p0":[{"name":"<正式名稱>","ok":true,"why":"<理由>"}],"p1":[]}'
     )
-    r = grade_call(prompt)
-    if not r.get("ok"):
-        return {"ok": False, "error": r.get("error", "AI 呼叫失敗")}
-    m = re.search(r'\{.*\}', r.get("text", ""), re.S)
-    if not m:
-        return {"ok": False, "error": "AI 未回傳 JSON：" + r.get("text", "")[:300]}
-    try:
-        parsed = json.loads(m.group(0))
-    except Exception as e:
-        return {"ok": False, "error": f"JSON 解析失敗：{e}"}
-    if not isinstance(parsed, dict):
-        return {"ok": False, "error": "AI 回傳的不是預期的 JSON 物件"}
 
-    def clamp(v, hi):
-        try:
-            return max(0, min(hi, round(float(v))))
-        except Exception:
-            return None
 
-    missing = []
-    for alias, (it, main, bonus, main_ask, bonus_ask) in zip(aliases, graded):
-        entry = parsed.get(alias)
-        if not isinstance(entry, dict):
-            missing.append(it["key"]); continue
-        out = {}
-        entry_scores = entry.get("scores") if isinstance(entry.get("scores"), dict) else {}
-        entry_bonus = entry.get("bonusScores") if isinstance(entry.get("bonusScores"), dict) else {}
-        if main:
-            scores = {}
-            ok = True
-            for q in main:
-                if q not in main_ask:
-                    scores[q] = 0
-                else:
-                    v = clamp(entry_scores.get(q), ai_max)
-                    if v is None: ok = False; break
-                    scores[q] = v
-            if not ok:
-                missing.append(it["key"]); continue
+def _grade_condition(spec, groups, overview, vcache):
+    vc = {"pieces": dict((vcache or {}).get("pieces") or {}),
+          "items": {k: dict(v) for k, v in ((vcache or {}).get("items") or {}).items() if isinstance(v, dict)}}
+    canon_index = {_norm_key(n): n for n in vc["items"]}
+    gp = {nk: _split_pieces(g["text"]) for nk, g in groups.items()}
+    unknown, seen = [], set()
+    for ps in gp.values():
+        for p in ps:
+            k = _norm_key(p)
+            if k not in vc["pieces"] and k not in seen:
+                seen.add(k)
+                unknown.append(p)
+    error = None
+    for i in range(0, len(unknown), CHUNK_PIECES):
+        chunk = unknown[i:i + CHUNK_PIECES]
+        aliases = [f"p{j}" for j in range(len(chunk))]
+        amap = dict(zip(aliases, chunk))
+
+        def validate(a, v):
+            if not isinstance(v, list):
+                return None
+            out = []
+            for it in v:
+                if not isinstance(it, dict):
+                    continue
+                name = str(it.get("name") or "").strip()
+                if not _norm_key(name):
+                    continue
+                ok = it.get("ok")
+                out.append({"name": name, "ok": ok if isinstance(ok, bool) else None,
+                            "why": str(it.get("why") or "")[:40]})
+            return out
+
+        got, err = _ask_for(aliases, lambda todo: _condition_prompt(spec, overview, list(vc["items"]), todo, amap), validate)
+        if err:
+            error = err
+        for a, lst in got.items():
+            canons = []
+            for it in lst:
+                nk = _norm_key(it["name"])
+                canon = canon_index.get(nk)
+                if canon is None:
+                    canon = it["name"]
+                    canon_index[nk] = canon
+                    vc["items"][canon] = {"ok": it["ok"], "by": "ai", "why": it["why"]}
+                if canon not in canons:
+                    canons.append(canon)
+            vc["pieces"][_norm_key(amap[a])] = canons
+    need, points, results = spec["need"], spec["points"], {}
+    for nk in groups:
+        entries, seen_c, unresolved = [], set(), False
+        for p in gp[nk]:
+            k = _norm_key(p)
+            if k not in vc["pieces"]:
+                unresolved = True
+                break
+            for c in vc["pieces"][k]:
+                if c in seen_c:
+                    continue
+                seen_c.add(c)
+                v = vc["items"].get(c) or {}
+                entries.append({"name": c, "ok": v.get("ok"), "why": v.get("why", ""), "by": v.get("by", "ai")})
+        if unresolved:
+            continue   # 這份作答有片段沒判斷到 → 不給假分數，整位學生留在未評分
+        used, extra = entries[:need], entries[need:]
+        good = [e["name"] for e in used if e["ok"] is True]
+        bad = [e for e in used if e["ok"] is False]
+        unsure = [e["name"] for e in used if e["ok"] is None]
+        notes = []
+        if good:
+            notes.append("符合：" + "、".join(good))
+        if bad:
+            notes.append("不符合：" + "、".join(e["name"] + (f"（{e['why']}）" if e["why"] else "") for e in bad))
+        if unsure:
+            notes.append("待老師確認：" + "、".join(unsure))
+        if len(used) < need:
+            notes.append(f"還少 {need - len(used)} 個")
+        if extra:
+            notes.append(f"只採計前 {need} 個")
+        results[nk] = {
+            "score": _half_up(points * len(good) / need),
+            "detail": {"mode": "condition", "need": need, "items": used, "ignored": [e["name"] for e in extra]},
+            "note": "；".join(notes) if notes else "沒有找到具體的項目",
+            "flag": bool(unsure),
+        }
+    return results, vc, error
+
+
+# ---------- checklist：檢核點 ----------
+def _grade_checklist(spec, groups, overview):
+    keys = list(groups)
+    results, error = {}, None
+    checks_txt = "\n".join(f"{c['id']}（{c['pts']} 分）：{c['desc']}" for c in spec["checks"])
+    example = ",".join(f'"{c["id"]}":{{"ok":true,"ev":"<原文片段>"}}' for c in spec["checks"])
+    for i in range(0, len(keys), CHUNK_ANSWERS):
+        chunk = keys[i:i + CHUNK_ANSWERS]
+        aliases = [f"a{j}" for j in range(len(chunk))]
+        amap = {a: groups[k]["text"] for a, k in zip(aliases, chunk)}
+
+        def make_prompt(todo):
+            return (
+                "你是國小資訊課的閱卷老師。\n\n" + master_rubric(spec["points"]) + "\n\n" + _q_header(spec, overview) + "\n\n"
+                + f"【評分方式：檢核點】本題滿分 {spec['points']} 分，由系統依你判斷的檢核點計分，你不用打分數。\n"
+                + checks_txt + "\n\n"
+                "規則：\n"
+                "- 每個檢核點各自判斷「有沒有做到」，只看內容，不看字數與文筆。\n"
+                "- 判定做到（ok:true）時，ev 要從學生原文一字不改地照抄能證明的關鍵片段（20 字內）；原文找不到能證明的片段，就是沒做到（ok:false，ev 留空）。\n"
+                "- note：給這位學生一句具體建議（30 字內），優先提醒還沒做到的檢核點；全部做到就肯定一個具體優點。\n\n"
+                + _answers_block(todo, amap) + "\n\n"
+                + '只輸出 JSON（不要多餘文字、不要程式碼圍欄），每份作答用 [] 裡的代號當鍵名、一個不漏：{"a0":{' + example + ',"note":"<建議>"}}'
+            )
+
+        def validate(a, v):
+            if not isinstance(v, dict):
+                return None
+            out = {}
+            for c in spec["checks"]:
+                cv = v.get(c["id"])
+                if not isinstance(cv, dict) or not isinstance(cv.get("ok"), bool):
+                    return None
+                out[c["id"]] = {"ok": cv["ok"], "ev": str(cv.get("ev") or "")[:60]}
+            out["_note"] = str(v.get("note") or "")[:120]
+            return out
+
+        got, err = _ask_for(aliases, make_prompt, validate)
+        if err:
+            error = err
+        for a, k in zip(aliases, chunk):
+            v = got.get(a)
+            if v is None:
+                continue
+            ans_norm = _norm_key(groups[k]["text"])
+            checks, score, flag = [], 0, False
+            for c in spec["checks"]:
+                cv = v[c["id"]]
+                ev_ok = (not cv["ok"]) or (bool(_norm_key(cv["ev"])) and _norm_key(cv["ev"]) in ans_norm)
+                if cv["ok"]:
+                    score += c["pts"]
+                if not ev_ok:
+                    flag = True   # AI 說做到了，但引用的證據在原文找不到 → 請老師確認
+                checks.append({"id": c["id"], "desc": c["desc"], "pts": c["pts"], "ok": cv["ok"], "ev": cv["ev"], "evMissing": not ev_ok})
+            results[k] = {"score": min(score, spec["points"]), "detail": {"mode": "checklist", "checks": checks},
+                          "note": v["_note"], "flag": flag}
+    return results, error
+
+
+# ---------- levels：分級（可選班級相對） ----------
+def _grade_levels(spec, groups, overview, anchors_in, allow_pick):
+    keys = list(groups)
+    results, error = {}, None
+    anchors = {k: v for k, v in (anchors_in or {}).items() if k in ("4", "2", "1") and str(v or "").strip()} if spec["relative"] else {}
+    state = {"anchors": anchors, "picked": False}
+    can_pick = spec["relative"] and not anchors and allow_pick and len(keys) >= 3
+    basis = "anchors" if anchors else ("pick" if can_pick else "absolute")
+
+    for i in range(0, len(keys), CHUNK_ANSWERS):
+        chunk = keys[i:i + CHUNK_ANSWERS]
+        aliases = [f"a{j}" for j in range(len(chunk))]
+        amap = {a: groups[k]["text"] for a, k in zip(aliases, chunk)}
+
+        def make_prompt(todo):
+            head = ("你是國小資訊課的閱卷老師。\n\n" + master_rubric(spec["points"]) + "\n\n" + _q_header(spec, overview) + "\n\n"
+                    + f"【配分】本題滿分 {spec['points']} 分。你只要給等級 0～4，分數由系統換算。\n"
+                    + "【評分標準】" + spec["standard"] + "\n"
+                    + "【等級】4＝優秀　3＝良好　2＝基本達成　1＝明顯不足　0＝與題目無關或無意義\n\n")
+            picking = can_pick and not state["anchors"]
+            if state["anchors"]:
+                a = state["anchors"]
+                how = ("【班級相對：本班錨點】以下是這個班級定下的代表作答，是固定的尺標，請和它們比較後給等級（不要重新挑選）：\n"
+                       + (f"4 級代表：「{a['4']}」\n" if a.get("4") else "")
+                       + (f"2 級代表：「{a['2']}」\n" if a.get("2") else "")
+                       + (f"1 級代表：「{a['1']}」\n" if a.get("1") else "")
+                       + "和 4 級代表相當或更好給 4；介於 4 級和 2 級代表之間給 3；和 2 級代表相當給 2；和 1 級代表相當或更弱但有回答到題目給 1。\n\n")
+            elif picking:
+                how = ("【班級相對】以這個班級的整體表現當尺標。先讀完全部作答，從中挑三份當本班錨點："
+                       "本班最好的代表（4 級）、本班中間水準的代表（2 級）、本班偏弱但有回答到題目的代表（1 級），把代號填在 anchors；"
+                       "再把每份作答和錨點比較給等級。\n\n")
+            else:
+                how = "【絕對標準】依評分標準判斷每份作答，不和其他同學比較。\n\n"
+            rules = ("規則：\n"
+                     "- 只看內容是否回應題目、符合評分標準、夠不夠具體，不看字數與文筆。\n"
+                     "- 品質相近的作答給相同等級；如果大家都一樣好，就都給一樣的等級，不需要為了拉開差距硬分高低。\n"
+                     "- note：給這位學生一句具體建議（30 字內），指出一個還可以補上的點。\n\n")
+            anchor_schema = '"anchors":{"4":"<代號>","2":"<代號>","1":"<代號>"},' if picking else ""
+            return (head + how + rules + _answers_block(todo, amap) + "\n\n"
+                    + '只輸出 JSON（不要多餘文字、不要程式碼圍欄），每份作答用 [] 裡的代號當鍵名、一個不漏：{'
+                    + anchor_schema + '"a0":{"level":<0到4整數>,"note":"<建議>"}}')
+
+        def on_response(d, todo):
+            if not (can_pick and not state["anchors"]):
+                return
+            an = d.get("anchors")
+            if not isinstance(an, dict):
+                return
+            picked = {lv: amap[str(an.get(lv))] for lv in ("4", "2", "1") if str(an.get(lv)) in amap}
+            if picked:
+                state["anchors"] = picked
+                state["picked"] = True
+
+        def validate(a, v):
+            if not isinstance(v, dict):
+                return None
+            lv = _num(v.get("level"))
+            if lv is None:
+                return None
+            return {"level": max(0, min(LEVEL_TOP, _half_up(lv))), "note": str(v.get("note") or "")[:120]}
+
+        got, err = _ask_for(aliases, make_prompt, validate, on_response)
+        if err:
+            error = err
+        for a, k in zip(aliases, chunk):
+            v = got.get(a)
+            if v is None:
+                continue
+            results[k] = {"score": _half_up(spec["points"] * v["level"] / LEVEL_TOP),
+                          "detail": {"mode": "levels", "level": v["level"], "basis": "absolute" if basis == "absolute" else "relative"},
+                          "note": v["note"], "flag": False}
+    keep = state["picked"] and len(keys) >= ANCHOR_SAVE_MIN
+    return results, (state["anchors"] if keep else None), error
+
+
+# ---------- 引擎：逐題評完，再組回每位學生 ----------
+def _grade_engine(items, questions, bonus_qids, open_qids, overview, verdicts, anchors, allow_pick, rubric=None):
+    bonus_set = set(bonus_qids or [])
+    qmap = {q.get("qid"): q for q in (questions or []) if isinstance(q, dict) and q.get("qid")}
+    answered_qids, per_q = [], {}
+    for it in items:
+        for q, a in (it.get("answers") or {}).items():
+            if q not in answered_qids:
+                answered_qids.append(q)
+            txt = _ans_text(a)
+            if _is_blank(txt):
+                continue
+            g = per_q.setdefault(q, {}).setdefault(_norm_key(txt), {"text": txt.strip(), "keys": []})
+            g["keys"].append(it["key"])
+    main_qids = [q for q in (open_qids or []) if q not in bonus_set]
+    main_qids += [q for q in answered_qids if q not in bonus_set and q not in main_qids]
+    specs = {q: build_spec(q, qmap.get(q), rubric, q in bonus_set) for q in set(main_qids) | set(answered_qids)}
+
+    def run(q):
+        spec, groups = specs[q], per_q[q]
+        if spec["mode"] == "condition":
+            res, vc, err = _grade_condition(spec, groups, overview, (verdicts or {}).get(q))
+            return q, res, err, vc, None
+        if spec["mode"] == "checklist":
+            res, err = _grade_checklist(spec, groups, overview)
+            return q, res, err, None, None
+        res, anc, err = _grade_levels(spec, groups, overview, (anchors or {}).get(q), allow_pick)
+        return q, res, err, None, anc
+
+    qres, errors, new_verdicts, new_anchors = {}, [], {}, {}
+    todo = [q for q in specs if per_q.get(q)]
+    if todo:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for q, res, err, vc, anc in ex.map(run, todo):
+                qres[q] = res
+                if err:
+                    errors.append(f"{q}：{err}")
+                if vc is not None:
+                    new_verdicts[q] = vc
+                if anc:
+                    new_anchors[q] = anc
+
+    ai_max = sum(specs[q]["points"] for q in main_qids) if main_qids else None
+    results, missing = {}, []
+    for it in items:
+        ans = it.get("answers") or {}
+        student_qids = main_qids + [q for q in ans if q in bonus_set]
+        scores, bonus_scores, details, notes, flags, bad, any_answer = {}, {}, {}, [], [], False, False
+        for q in student_qids:
+            spec, txt = specs[q], _ans_text(ans.get(q))
+            if _is_blank(txt):
+                sc, d = 0, {"mode": spec["mode"], "blank": True}
+            else:
+                any_answer = True
+                r = (qres.get(q) or {}).get(_norm_key(txt))
+                if r is None:
+                    bad = True
+                    break
+                sc, d = r["score"], dict(r["detail"])
+                d["note"] = r.get("note") or ""
+                if d["note"]:
+                    notes.append((q, d["note"]))
+                if r.get("flag"):
+                    flags.append(q)
+            d["points"], d["bonus"] = spec["points"], spec["bonus"]
+            details[q] = d
+            (bonus_scores if q in bonus_set else scores)[q] = min(sc, spec["points"])
+        if bad:
+            missing.append(it["key"])
+            continue
+        out = {"details": details, "flags": flags, "aiMax": ai_max}
+        if main_qids:
             out["scores"] = scores
-            out["score"] = round(sum(scores.values()) / len(scores))
-        if bonus:
-            bonus_scores = {}
-            for q in bonus:
-                v = 0 if q not in bonus_ask else clamp(entry_bonus.get(q), 3)
-                bonus_scores[q] = v if v is not None else 0
+            out["score"] = sum(scores.values())
+        if any(q in bonus_set for q in student_qids):
             out["bonusScores"] = bonus_scores
             out["bonusScore"] = sum(bonus_scores.values())
-        if want_feedback:
-            out["feedback"] = entry.get("feedback") or ""
+        if not any_answer:
+            out["feedback"] = BLANK_NOTE
+        elif len(notes) == 1:
+            out["feedback"] = notes[0][1]
+        else:
+            out["feedback"] = "　".join(f"【{q}】{n}" for q, n in notes)
         results[it["key"]] = out
-    return {"ok": True, "results": results, "missing": missing, "aiMax": ai_max}
+    return {"results": results, "missing": missing, "aiMax": ai_max, "verdicts": new_verdicts,
+            "anchors": new_anchors, "error": "；".join(errors) if errors else None}
 
 
 def grade_batch(payload):
-    """POST /api/grade-batch：整個班級一次呼叫（見 _ai_grade_batch）；超過 CHUNK 人才分段，
-    每段仍是一次呼叫評多人，不會退化成逐筆呼叫。"""
-    items = payload.get("items") or []
-    rubric = payload.get("rubric")
-    questions = payload.get("questions") or []
-    bonus_qids = payload.get("bonusQids") or []
-    want_feedback = bool(payload.get("wantFeedback"))
-    overview = payload.get("overview")
-    CHUNK = 40
-    all_results, all_missing, errors = {}, [], []
-    for i in range(0, len(items), CHUNK):
-        chunk = items[i:i + CHUNK]
-        r = _ai_grade_batch(chunk, rubric, questions, want_feedback, bonus_qids, overview)
-        if not r.get("ok"):
-            errors.append(r.get("error", "AI 呼叫失敗"))
-            all_missing.extend(it["key"] for it in chunk)
-            continue
-        all_results.update(r.get("results") or {})
-        all_missing.extend(r.get("missing") or [])
-    return {"ok": True, "results": all_results, "missing": all_missing,
-            "aiMax": _rubric_total(rubric),
-            "error": "；".join(errors) if errors else None}
+    """POST /api/grade-batch：整個班級一次評完。對教師來說仍是一個按鈕批改全班；
+    內部改成「逐題」組 prompt（同一題的全班作答放一起、用同一套標準），各題平行呼叫。"""
+    items = [it for it in (payload.get("items") or []) if isinstance(it, dict) and it.get("key")]
+    r = _grade_engine(items, payload.get("questions"), payload.get("bonusQids"), payload.get("openQids"),
+                      payload.get("overview"), payload.get("verdicts"), payload.get("anchors"), True, payload.get("rubric"))
+    return {"ok": True, **r}
 
 
 def grade_submission(payload):
+    """POST /api/grade：批改抽屜單筆評分。同一套引擎；班級相對的題目沿用該班已存的錨點，
+    沒有錨點時（單筆沒有母體可挑）退回絕對標準。"""
     answers = payload.get("answers") or {}
     answer_key = payload.get("answerKey") or {}
-    rubric = payload.get("rubric")
-    questions = payload.get("questions") or []
-    bonus_qids = payload.get("bonusQids") or []
-    overview = payload.get("overview")
     per_item, auto_ok, auto_total = [], 0, 0
     for qid, correct in answer_key.items():
         got = answers.get(qid)
         ok = _norm(got) == _norm(correct)
         auto_total += 1
         auto_ok += 1 if ok else 0
-        per_item.append({"qid": qid, "type": "objective", "correct": ok,
-                         "expected": correct, "got": got})
+        per_item.append({"qid": qid, "type": "objective", "correct": ok, "expected": correct, "got": got})
     auto_score = round(auto_ok / auto_total * 100) if auto_total else None
     open_items = {q: v for q, v in answers.items() if q not in answer_key}
-    ai_score, ai_bonus_score, ai_feedback, ai_max = None, None, "", _rubric_total(rubric)
-    ai_scores, ai_bonus_scores = None, None
-    if open_items:
-        ai = _ai_grade(open_items, rubric, questions, bonus_qids, overview)
-        if ai.get("ok"):
-            ai_score = ai.get("score")
-            ai_bonus_score = ai.get("bonusScore")
-            ai_scores = ai.get("scores")
-            ai_bonus_scores = ai.get("bonusScores")
-            ai_max = ai.get("aiMax", ai_max)
-            ai_feedback = ai.get("feedback", "")
+    out = {"ok": True, "autoScore": auto_score, "aiScore": None, "bonusScore": None, "scores": None,
+           "bonusScores": None, "aiMax": None, "aiFeedback": "", "details": None, "flags": [],
+           "verdicts": {}, "perItem": per_item, "autoCorrect": auto_ok, "autoTotal": auto_total}
+    if not open_items:
+        return out
+    r = _grade_engine([{"key": "one", "answers": open_items}], payload.get("questions"), payload.get("bonusQids"),
+                      payload.get("openQids"), payload.get("overview"), payload.get("verdicts"), payload.get("anchors"),
+                      False, payload.get("rubric"))
+    out["aiMax"], out["verdicts"] = r["aiMax"], r["verdicts"]
+    res = r["results"].get("one")
+    if not res:
+        out["aiFeedback"] = "AI 評分失敗：" + (r.get("error") or "AI 沒有回應")
+        return out
+    out.update({"aiScore": res.get("score"), "scores": res.get("scores"), "bonusScore": res.get("bonusScore"),
+                "bonusScores": res.get("bonusScores"), "aiFeedback": res.get("feedback", ""),
+                "details": res.get("details"), "flags": res.get("flags") or []})
+    return out
+
+
+def fetch_grading_spec(url):
+    """讀學習單網頁裡的 <script type="application/json" id="grading-spec">（見《學習單資料與提交規範》§2-e），
+    讓出題時就寫好的「題幹＋評分方式＋標準＋配分」一鍵帶進評分平台。"""
+    if not url:
+        return {"ok": False, "error": "缺 url"}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 gradingPlatform"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read(3_000_000).decode("utf-8", "replace")
+        m = re.search(r'<script[^>]*id=["\']grading-spec["\'][^>]*>(.*?)</script>', raw, re.S | re.I)
+        if not m:
+            return {"ok": False, "error": "這份學習單沒有內嵌評分設定（id=\"grading-spec\" 的 JSON）"}
+        d = json.loads(m.group(1).strip())
+        qs = d.get("questions") if isinstance(d, dict) else d
+        if not isinstance(qs, list):
+            return {"ok": False, "error": "評分設定格式不對：要有 questions 陣列"}
+        # scoring（選填）：出題時就寫好的分數計算——總分、起跳分數、每題預設扣分、非開放題逐題配分（見提交規範 §2-e）
+        sc_in = d.get("scoring") if isinstance(d, dict) and isinstance(d.get("scoring"), dict) else {}
+        scoring = {}
+        for k in ("base", "floor", "deduction"):
+            v = _num(sc_in.get(k))
+            if v is not None and v >= 0:
+                scoring[k] = v
+        ip = {str(q): _num(v) for q, v in (sc_in.get("itemPoints") or {}).items()} if isinstance(sc_in.get("itemPoints"), dict) else {}
+        ip = {q: v for q, v in ip.items() if v is not None and v >= 0}
+        if ip:
+            scoring["itemPoints"] = ip
+        return {"ok": True, "questions": [q for q in qs if isinstance(q, dict) and q.get("qid")],
+                "summary": (d.get("summary") if isinstance(d, dict) else "") or "", "scoring": scoring}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _html_text(fragment):
+    """HTML 片段 → 純文字（去掉 style／svg／標籤，保留 script 內文：題目常寫在 JS 陣列裡）。"""
+    import html as _html
+    t = re.sub(r"<(style|svg)[^>]*>.*?</\1>", " ", fragment, flags=re.S | re.I)
+    t = re.sub(r"<!--.*?-->", " ", t, flags=re.S)
+    t = re.sub(r"<[^>]+>", " ", t)
+    return re.sub(r"\s+", " ", _html.unescape(t)).strip()
+
+
+def _scale_checks(checks, target):
+    """檢核點配分依比例調成加總＝target（每點至少 1 分，差額補在配分最大的那點）。"""
+    s = sum(c["pts"] for c in checks)
+    if not target or not s or s == target or len(checks) > target:
+        return checks
+    for c in checks:
+        c["pts"] = max(1, _half_up(c["pts"] * target / s))
+    diff = target - sum(c["pts"] for c in checks)
+    big = max(checks, key=lambda c: c["pts"])
+    big["pts"] = max(1, big["pts"] + diff)
+    return checks
+
+
+def gen_grading_spec(payload):
+    """AI 先讀學習單網頁，替每一題開放題寫評分設定（題幹、評分方式、標準、配分）。
+    結果只回給教師端填進卡片，老師檢查後按「儲存設定」才寫進 worksheets/{id}.questions——綁這份學習單，各班共用。"""
+    url = str(payload.get("url") or "").strip()
+    wanted = [q for q in (payload.get("questions") or []) if isinstance(q, dict) and str(q.get("qid") or "").strip()]
+    if not url:
+        return {"ok": False, "error": "這份學習單還沒登記網址，AI 讀不到內容。"}
+    if not wanted:
+        return {"ok": False, "error": "目前沒有開放題可以設定（還沒有人繳交、下面也沒有題目卡片）。"}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 gradingPlatform"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read(3_000_000).decode("utf-8", "replace")
+    except Exception as e:
+        return {"ok": False, "error": f"讀不到學習單網頁：{e}"}
+    body = re.sub(r"<head[^>]*>.*?</head>", " ", raw, count=1, flags=re.S | re.I)
+    page = _html_text(body)[:30000]
+    blocks = []
+    for q in wanted:
+        qid = str(q["qid"]).strip()
+        ctx = []
+        for m in list(re.finditer(r'data-qid=["\']' + re.escape(qid) + r'["\']', raw))[:2]:
+            ctx.append(_html_text(raw[max(0, m.start() - 2500):m.start() + 800])[-900:])
+        samples = [str(s)[:200] for s in (q.get("samples") or []) if str(s).strip()][:6]
+        target = _num(q.get("points"))
+        blocks.append(
+            f"### 題號 {qid}（{'加分題' if q.get('bonus') else '主要開放題'}）\n"
+            + (f"- 目前題幹：{str(q.get('prompt') or '').strip()}\n" if str(q.get('prompt') or '').strip() else "")
+            + (f"- 指定配分：{_half_up(target)} 分（必須照這個配分）\n" if target and target > 0 else "- 配分：由你建議（主要題 2～10、加分題 1～3）\n")
+            + ("- 題目附近的網頁文字：" + " …… ".join(ctx) + "\n" if ctx else "")
+            + ("- 幾份學生實際作答（看作答長相用，不代表對錯）：\n" + "\n".join("  · " + s for s in samples) + "\n" if samples else ""))
+    prompt = (
+        "你是國小資訊課老師的評分設計助手。請先讀完下面這份學習單的內容，再替指定的每一題開放題寫評分設定。\n\n"
+        f"學習單標題：{payload.get('title') or ''}\n"
+        + (f"老師寫的概要：{payload.get('summary')}\n" if payload.get("summary") else "")
+        + "\n【評分方式怎麼選】\n"
+        "- condition（條件查核）：查資料、答案只要「符合條件」就對，可能的答案多到列不完（例：找出 2 個中西區的景點）。"
+        "要填 conditions（條件，每個項目必須全部符合）、need（要找幾個）、basis（判斷依據，選填，例：以台南旅遊網的分類為準）。\n"
+        "- checklist（檢核點）：開放但有明確要素（例：說出景點＋用查到的資料說明理由）。要填 checks：2～4 個「有沒有做到」的項目，每項 desc 與整數 pts，pts 加總＝配分。\n"
+        "- levels（分級）：表達想法、品質有高低（心得、你會怎麼做）。要填 standard：一兩句「好的回答要做到什麼」。"
+        "主要題 relative=true（以班級程度當尺標），加分題 relative=false。\n\n"
+        "【原則】\n"
+        "1. 標準只要求題目真的有問的東西，符合國小學生程度，不額外要求字數、修辭或題目沒提到的內容。\n"
+        "2. 每個標準都要能從學生寫的文字直接判斷有沒有做到，不寫「用心」「認真」這種看不出來的描述。\n"
+        "3. prompt 填學生在學習單上看到的題目文字（從網頁內容找；找不到就沿用目前題幹）。\n"
+        "4. 有指定配分的題目，points 必須等於指定配分；checklist 的 pts 加總也必須等於它。\n\n"
+        "【學習單內容（網頁文字，已去掉排版）】\n" + page + "\n\n"
+        "【要設定的題目】\n" + "\n".join(blocks) + "\n"
+        "只回傳 JSON，不要其他文字，格式：\n"
+        '{"summary":"一句話說這份學習單在教什麼","questions":[{"qid":"題號","prompt":"題幹","mode":"levels|checklist|condition",'
+        '"points":整數,"standard":"","relative":true,"checks":[{"desc":"","pts":整數}],"conditions":[""],"need":1,"basis":""}]}'
+    )
+    d, err = _ask_json(prompt)
+    if err:
+        return {"ok": False, "error": err}
+    want = {str(q["qid"]).strip(): q for q in wanted}
+    out = []
+    for q in (d.get("questions") or []):
+        if not isinstance(q, dict):
+            continue
+        qid = str(q.get("qid") or "").strip()
+        if qid not in want or any(o["qid"] == qid for o in out):
+            continue
+        is_bonus = bool(want[qid].get("bonus"))
+        spec = build_spec(qid, q, None, is_bonus)
+        target = _num(want[qid].get("points"))
+        target = _half_up(target) if target and target > 0 else None
+        checks = [{"desc": c["desc"], "pts": c["pts"]} for c in spec["checks"]]
+        if spec["mode"] == "checklist":
+            checks = _scale_checks(checks, target)
+            points = sum(c["pts"] for c in checks)
         else:
-            ai_feedback = "AI 評分失敗：" + ai.get("error", "")
-    return {"ok": True, "autoScore": auto_score, "aiScore": ai_score,
-            "bonusScore": ai_bonus_score, "scores": ai_scores, "bonusScores": ai_bonus_scores, "aiMax": ai_max,
-            "aiFeedback": ai_feedback, "perItem": per_item,
-            "autoCorrect": auto_ok, "autoTotal": auto_total}
+            points = target or spec["points"]
+        out.append({
+            "qid": qid, "prompt": spec["prompt"] or str(want[qid].get("prompt") or "").strip(), "mode": spec["mode"],
+            "points": points, "standard": str(q.get("standard") or "").strip(), "relative": spec["relative"],
+            "checks": checks, "conditions": spec["conditions"], "basis": spec["basis"], "need": spec["need"]})
+    if not out:
+        return {"ok": False, "error": "AI 沒有回傳可用的題目設定，請再試一次。"}
+    missing = [q for q in want if not any(o["qid"] == q for o in out)]
+    return {"ok": True, "questions": out, "summary": str(d.get("summary") or "").strip()[:120], "missing": missing}
 
 
 # ========== Google Classroom（自帶授權，redirect 指向 8780）==========
@@ -639,6 +985,27 @@ def google_courses():
         return {"ok": True, "courses": courses}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def classroom_announce(course_id, text):
+    """在 Classroom 課程的訊息串發一則公告（繳交紀錄的「發布缺交名單」）。"""
+    text = str(text or "").strip()
+    if not course_id or not text:
+        return {"ok": False, "error": "缺課程或公告內容"}
+    scope = ((read_config().get("google_token") or {}).get("scope") or "")
+    if scope and "classroom.announcements" not in scope:
+        return {"ok": False, "needReauth": True,
+                "error": "目前的 Google 授權沒有「發布公告」權限，請到「設定 → Google Classroom」重新按一次「授權 Google」。"}
+    try:
+        r = _gapi(f"https://classroom.googleapis.com/v1/courses/{course_id}/announcements", "POST",
+                  {"text": text[:30000], "state": "PUBLISHED"})
+        return {"ok": True, "id": r.get("id"), "link": r.get("alternateLink", "")}
+    except Exception as e:
+        msg = str(e)
+        if "403" in msg and ("scope" in msg.lower() or "insufficient" in msg.lower() or "PERMISSION" in msg):
+            return {"ok": False, "needReauth": True,
+                    "error": "Google 拒絕發布（權限不足）。請到「設定 → Google Classroom」重新授權一次後再試。"}
+        return {"ok": False, "error": msg}
 
 
 def classroom_coursework(course_id):
@@ -797,6 +1164,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, grade_models())
             if u.path == "/api/fetch-title":
                 return self._send(200, fetch_title(q.get("url", [""])[0]))
+            if u.path == "/api/grading-spec":
+                return self._send(200, fetch_grading_spec(q.get("url", [""])[0]))
             if u.path == "/api/google/auth-url":
                 return self._send(200, google_auth_url())
             if u.path == "/api/google/courses":
@@ -856,6 +1225,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, grade_submission(data))
             if u.path == "/api/grade-batch":
                 return self._send(200, grade_batch(data))
+            if u.path == "/api/gen-grading-spec":
+                return self._send(200, gen_grading_spec(data))
             if u.path == "/api/google/logout":
                 cfg = read_config(); cfg.pop("google_token", None); save_config(cfg)
                 return self._send(200, {"ok": True})
@@ -863,6 +1234,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, classroom_create_coursework(
                     data.get("courseId", ""), data.get("title", ""),
                     data.get("maxPoints", 100), data.get("link", ""), data.get("description", "")))
+            if u.path == "/api/classroom/announce":
+                return self._send(200, classroom_announce(data.get("courseId", ""), data.get("text", "")))
             if u.path == "/api/classroom/grades":
                 return self._send(200, classroom_grades(data.get("courseId", ""), data.get("courseWorkId", ""), data.get("grades", [])))
             return self._send(404, {"error": "no route"})

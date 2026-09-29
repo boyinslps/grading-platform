@@ -29,8 +29,10 @@
 
 ```
 submissions/{wsId}__{grade}-{className}-{studentId}   學生繳交（見學習單資料規範 §3 完整欄位）
-worksheets/{wsId}                        學習單設定（老師管理） { title, category, url, scoring?, rubric?, questions?, answerKey?（舊式，見 §7 分數計算） }
+worksheets/{wsId}                        學習單設定（老師管理） { title, category, url, summary?, scoring?, questions?（開放題題目規格，見 §7-j）,
+                                            verdicts?（條件查核判定紀錄，見 §7-j）, rubric?（舊式整份規準，儲存新設定時移除）, answerKey?（舊式，見 §7 分數計算） }
 courses/{grade}-c{className}             班級名單（老師管理） { grade, className, name:"{grade}年{className}班", source:'manual'|'classroom',
+                                            gradingAnchors?:{wsId:{qid:{"4","2","1"}}}（班級相對分級的錨點，見 §7-j）,
                                             students/{seatNo}:{seatNo, name, classroomUserId?} }  // classroomUserId 有值時，Classroom 回寫可精準比對，不必猜姓名
 feeds/{wsId}/messages/{autoId}           開放題即時同儕動態（見學習單資料規範 §4） { qid, text, tag, at }
 quizzes/{wsId}                           （L01 沿用）老師控制的「公布/還原」即時同步，與 submissions 是兩個獨立機制，見《互動教材進階規範》§2
@@ -48,8 +50,10 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 | 路由 | 功能 |
 |---|---|
 | GET/POST `/api/settings` | 讀寫本專案設定：`grade_provider/endpoint/key/model`（AI）、`google_client_id/secret`、`google_token`（授權後自動存） |
-| POST `/api/grade` | 單筆：收 {answers, answerKey?, rubric?, questions?} → 標準答案核對＋開放題丟 AI（見《AI串接窗口設定規範》）→ 回 {autoScore, aiScore, aiFeedback, perItem[]}。用於批改抽屜對單一學生重新計算，不是批次評分的路徑（見下） |
-| POST `/api/grade-batch` | **整個班級一次 AI 呼叫**：收 {items:[{key,answers}], rubric?, questions?, wantFeedback} → 回 {results:{key:{score,feedback}}, missing:[key,...]}。教師端「AI 批次評分」走這條，不逐筆呼叫 `/api/grade`；超過 40 人會分段送出，但每段仍是一次呼叫評多人，不會退化成一人一次 |
+| POST `/api/grade` | 單筆（批改抽屜）：收 {answers, answerKey?, questions, bonusQids, openQids, overview, verdicts, anchors, rubric?(舊)} → 回 {aiScore, aiMax, scores, bonusScore, bonusScores, aiFeedback, details, flags, verdicts, perItem[]}。與批次共用評分引擎（§7-j） |
+| POST `/api/grade-batch` | **老師按一次評完整班**：收 {items:[{key,answers}], questions, bonusQids, openQids, overview, verdicts, anchors} → 回 {results:{key:{score,scores,aiMax,bonusScore,bonusScores,feedback,details,flags}}, missing, verdicts, anchors, error}。後端逐題組 prompt（同一題全班作答一起評）、各題平行呼叫，見 §7-j |
+| GET `/api/grading-spec` | 讀學習單網頁內嵌的評分設定（`id="grading-spec"` 的 JSON，見《學習單資料與提交規範》§2-e）→ 回 {questions, summary, scoring} |
+| POST `/api/gen-grading-spec` | **AI 讀學習單產生開放題評分設定**：收 {url, title, summary, questions:[{qid, bonus, prompt, points, samples}]} → 讀網頁（去掉 head／style／svg，題目附近文字另外擷取）→ 回 {questions（同 §7-j 題目規格）, summary, missing}。見 §7-k |
 | GET `/api/grade-models` | 列 AI 可用模型 |
 | GET `/api/fetch-title` | 讀某網址 `<title>`（新增學習單時自動帶標題） |
 | GET `/api/google/auth-url` | 產生 Google 授權連結（redirect 指向本專案 `:8780/oauth/callback`） |
@@ -59,6 +63,7 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 | GET `/api/classroom/coursework` | 列某 Classroom 課程的作業 |
 | GET `/api/classroom/students` | 列某 Classroom 課程名單（需 `classroom.rosters.readonly` scope） |
 | POST `/api/classroom/coursework` | **依標題確保作業存在**：先找同名作業，找不到才建立（PUBLISHED、全班指派、附學習單連結）→ 回 {id, created} |
+| POST `/api/classroom/announce` | 在 Classroom 課程訊息串發公告 {courseId, text}（繳交紀錄的缺交名單；需 `classroom.announcements` 權限）|
 | POST `/api/classroom/grades` | 回寫分數到指定 courseWork（patch draft+assigned 後 `:return`）；讀不到 studentSubmissions 時等 2 秒重讀一次（剛建立的作業有生成延遲） |
 | GET `/api/diagnostics` | AI／Google 連線狀態快覽 |
 | GET `/api/timetable` | 讀課表（節次時間、星期×節次→班級、每班本週學習單）；沒有檔案時回一份預設節次時間 |
@@ -113,7 +118,18 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 - **範例**（呼應教師原話）：8 題體驗全對、無開放題 → 100 分；答錯 1 題 → 99 分；同一份若加一題開放題（AI 給 80）→ 非開放題滿分降為 90、答錯 2 題扣 2 分 → 88 分，AI 部分 80%×10=8 分，合計 96 分。
 - **UI**：`renderScoring()` 顯示總分／預設扣分／開放題保留分數三個輸入框，下面列出這份學習單目前出現過的**非開放題題號**（掃 `subsCache` 的 `scoreAnswers`/`experienceAnswers` 鍵，`nonOpenQids()`），逐題可覆寫扣分（留空＝用預設）。批改抽屜按「計算分數」時用 `renderCalcBox()` 顯示分解（非開放題幾分、扣了哪幾題、AI 開放題幾分＋回饋），最終分仍可手動覆寫再存。
 - **相容**：`/api/grade` 的 `answerKey` 參數與逐題 `perItem` 顯示保留給舊資料（早期用手填標準答案存過 `worksheets.answerKey` 的學習單），新學習單一律不再寫這個欄位。
-- **未來方向（尚未實作，2026-09-15 教師提出）**：`itemPoints` 目前只覆寫非開放題（`score`／`experience`）的逐題扣分；開放題只有一個整份共用的 `openWeight`，加分題是統一的 0～3 等級疊加，都不是「每一題各自一個可自訂配分」。之後新建立的學習單要讓每一題（含開放題、加分題）都能個別設定配分，細節見 `../引導規範/學習單資料與提交規範.md` §2-c 與 `../引導規範/AI評分規範.md` §7——這會連動 AI 逐題評分（見下方 §7-h 的未來方向），目前僅記錄方向，程式碼未變動。
+- **2026-09-23 更新**：
+  - `scoring.openFromPoints`（預設 true）：每一題主要開放題都有填配分時，`openWeight` 直接＝配分加總（各題配分就是最終成績裡的真實分數）；有任何一題沒填就退回手動 `openWeight` 換算。
+  - `hasOpen` 只看**主要**開放題：開放題全是加分題時不再保留 `openWeight`（以前會讓這種學習單的學生平白少掉保留分數）。
+  - 加分題（`bonusQids`）若是 `score`／`experience` 型：**不進扣分池，答對才加** `itemPoints[qid] ?? deduction`（對齊《學習單資料與提交規範》§2-b；以前會被當一般題扣分）。
+- **2026-09-29 更新（教師指定）**：
+  - **體驗題沒有正解＝看有沒有作答**：`itemPassed(rec,isExp)`——`isCorrect` 為 true 就過；體驗題 `correct` 為空（沒設答案、或老師還沒公布）且作答是文字或數字時，有寫就算過。陣列／物件作答是學習單自訂元件，完成條件由學習單自己判，不放寬。
+  - **起跳分數 `scoring.floor`（預設 80）＋依題數自動配分**：`base − floor` 平均分給全部主要題（非開放題寫 `itemPoints`、開放題寫卡片配分，除不盡時開放題先多拿 1 分；分不成整數才用 0.5／0.25…），全空白最低分＝起跳分數，加分題另外加（非開放加分題預填同一份額）。`floor` 不是硬性下限，只是配分目標；面板即時顯示「配分合計 X → 全空白最低 100−X」，不等於起跳分數時提醒。
+  - **何時預填**：打開學習單設定時，有空白的主要題配分就依題數補上（只填空白格；「依題數自動配分」按鈕才會覆蓋全部，檢核點題目的配分由檢核點決定不動）。都要老師按「儲存設定」才生效。
+  - **逐題配分改成網格**（`renderScGrid()`，每格 題號＋題型＋輸入框，`auto-fill minmax(150px)`）：非開放題與開放題都在同一張網格，開放題那格和下方卡片的配分雙向同步。
+  - **題號清單只看近期繳交**（`currentQtypes()`）：最新一份往前 3 天內、出現在 ≥30% 繳交的題號才算，題型取最新的；`nonOpenQids()`、`mainOpenQids()` 都改用它，避免改版前的舊題號混進配分與開放題滿分。
+  - **完成度**：列表與 CSV 顯示整份學習單完成度（`completionOf()`：`qtypes` 全部題目扣掉加分題，有作答的比例；空字串、空陣列、false、計數 0 算沒寫）。
+- **原「未來方向」（2026-09-15 提出，已由 §7-j 實作）**：`itemPoints` 目前只覆寫非開放題（`score`／`experience`）的逐題扣分；開放題只有一個整份共用的 `openWeight`，加分題是統一的 0～3 等級疊加，都不是「每一題各自一個可自訂配分」。之後新建立的學習單要讓每一題（含開放題、加分題）都能個別設定配分，細節見 `../引導規範/學習單資料與提交規範.md` §2-c 與 `../引導規範/AI評分規範.md` §7——這會連動 AI 逐題評分（見下方 §7-h 的未來方向），目前僅記錄方向，程式碼未變動。
 
 ### 7-e. AI 批次評分：整班一次呼叫，不逐筆問 AI（2026-09-10 教師指定）
 > 動機：一筆一筆呼叫 AI 既慢又貴，而且班上人數一多，AI 額度/速率限制容易先撞到；同一班一次呼叫也讓 AI 看得到同一題的其他人怎麼寫，評分尺度更一致。
@@ -148,7 +164,7 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 - **`啟用AI` 勾選框**（原「附評語」，教師指定改名兼改功能）：`teacher.html` 頂欄「批次評分」按鈕旁的 `#aiEnableChk`，預設勾選。**勾選**＝跟以前一樣：有開放題的學生一次 AI 呼叫評完、順便附評語；**取消勾選**＝完全不呼叫 AI，`withOpen`（有開放題）的學生維持未評分狀態（不寫入假分數），訊息會明講「請到批改抽屜手動評」——`batchGrade()` 判斷式是 `if(!withOpen.length||!aiEnabled){writeAndFinish('');return;}`。這個開關只影響「批次評分」；批改抽屜逐筆按「計算分數」仍然一律呼叫 AI（那裡沒有對應開關，見 §7-d）。
 - 按鈕文字順帶從「AI 批次評分」改成「批次評分」——這顆按鈕本來就不是只有 AI 在做事（沒有開放題的學生本地算分、不叫 AI），舊名字容易讓人誤會「沒有開放題也要等 AI」。
 
-### 7-h. AI 評分總則＋規準分制（2026-09-16 教師指定）
+### 7-h. AI 評分總則＋規準分制（2026-09-16 教師指定；**2026-09-23 已由 §7-j 取代**，下文保留作歷史記錄）
 > 動機：AI 評分以前是「0–100 分、每個人都給差不多」，既看不出高下，也沒有一條可以一次改到全部評分的總規則。教師要的是：**一份最上級的評分準則、每次呼叫都先插進去**，而且**給分上限由自己填的規準決定**。
 
 - **完整規範文件** → `../引導規範/AI評分規範.md`（評分總則原文、哪些題型會送 AI、三條伺服器強制規則、尺規換算、為什麼相對比較只在批次成立）。這裡只記評分平台這側的實作重點。
@@ -164,6 +180,44 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
   - `aiMax` 跟著成績寫進 `submissions/{id}`，列表 AI 欄顯示成 `8 / 10`，避免被誤讀成「只考 8 分」。
 - **沒作答＝0 分，而且不送進 prompt**：`_is_blank()`（去掉空白與標點後為空即視為沒寫）在組 prompt 前就把這些人挑掉直接給 0——省 token，也避免一堆空白作答拉低 AI 對「這批平均水準」的判斷，影響總則第 2 點的相對比較。
 - **「依標準差／相對突出程度給分」只有批次評分成立**：批次是整班一次呼叫，AI 看得到全班分佈；批改抽屜的單筆評分只看得到一位，沒有母體可比，此時退化成依規準的絕對評分（見 §7-e 與《AI評分規範》§5）。
+
+### 7-j. 通用評分引擎：逐題規格、AI 只判斷、分數由系統算（2026-09-23 教師指定）
+> 動機：G4 L02「找出符合條件的景點」全班都答對，AI 卻因景點不同給不同分數。根因是舊總則要求所有題目「和同儕比、拉開分數」，
+> 加上規準是整份共用、每題都以整份上限評分再平均。教師要求：題幹、標準、配分寫在一起給 AI；每題不得超過自己的配分；做成之後每份學習單都適用的通用系統。
+
+- **完整規則** → `../引導規範/AI評分規範.md`（三種評分方式、班級相對錨點、判定紀錄、Firestore 欄位）。這裡只記實作位置。
+- **後端**（`server.py`）：`build_spec()` 補齊題目規格（舊格式相容）；`_grade_engine()` 依題目分組、正規化去重、各題平行呼叫
+  `_grade_condition()`／`_grade_checklist()`／`_grade_levels()`，再組回每位學生；`_ask_for()` 統一「問 AI → 逐代號驗證 → 缺的再問一次」。
+  `/api/grade-batch`、`/api/grade` 共用引擎，多收 `openQids`（決定開放題滿分）、`verdicts`、`anchors`，多回 `details`、`flags`、`verdicts`、`anchors`。
+  新增 `GET /api/grading-spec?url=`：讀學習單內嵌的 `<script type="application/json" id="grading-spec">`（見提交規範 §2-e）。
+- **前端**（`teacher.html`）：
+  - 學習單設定的「開放題評分設定」：一題一張卡片（題號、評分方式、配分、題幹＋該方式的標準），自動補上繳交中出現的開放題、
+    題幹自動帶入 `qtexts`；條件查核卡片顯示判定紀錄（點一下改判、立即存檔）；分級卡片顯示本班錨點（可重設）。
+    儲存時：條件改了→清該題判定紀錄；題幹／標準／方式改了→清各班該題錨點；移除舊的整份 `rubric`。
+  - 批改抽屜：已評過的直接顯示逐題結果（項目✓✗、檢核點與證據、等級、評語），主要開放題分數可直接改（夾在 0～配分），
+    加分題用下拉選單（範圍＝該題配分）。儲存＝老師已確認，清空 `aiFlags`。
+  - 列表：AI 欄有 `aiFlags` 時顯示「待確認」；AI 評語與學生作答一律 `esc()`（以前是直接塞 HTML）。匯出 CSV 多一欄「開放題逐題」。
+- **學生端模組**（`student-submit.js`）：開放題元素的 `data-qtext` 自動收集成 `qtexts` 一起送出。
+- **驗證**：見《AI評分規範》§8（mock 31 項＋實際呼叫 gemini-3-flash-preview）；前端在瀏覽器以假 Firestore／假後端回應測過設定儲存與失效清除、
+  判定改判、錨點顯示、批次評分分數組合（含只有加分題、非開放加分題）、抽屜改分與儲存、XSS 字串顯示為純文字。
+
+### 7-k. 評分設定從哪來：備課時內嵌 → 自動讀入；沒有就 AI 讀學習單產生（2026-09-29 教師指定）
+- **備課平台產出互動 HTML 時就寫好**：學習單內嵌 `grading-spec`（開放題規格＋`scoring`，見《學習單資料與提交規範》§2-e）；工作台交接包提醒 Claude Code 照做。
+- **第一次打開學習單設定**（`worksheets/{id}` 還沒有 `questions` 也沒有 `scoring`）時自動 `fetchGradingSpec()`→`applyGradingSpec()` 填進畫面，再把還空的配分依題數補齊；老師檢查後按儲存。之後以平台存的為準，要重新帶入按「從學習單讀取」。
+- **學習單沒有內嵌設定**：「AI 讀學習單產生」→ `/api/gen-grading-spec`。配分沿用目前卡片配分（已依題數配好）當指定配分，AI 只寫題幹／評分方式／標準，checklist 檢核點由伺服器等比例調成加總＝配分；已有標準的卡片會先確認才覆蓋。
+- **綁學習單、不綁班級**：存在 `worksheets/{id}.questions`／`scoring`，切換班級沿用同一套；只有 `levels` 班級相對的錨點依班級記在 `courses/{班級}.gradingAnchors`（原設計不變）。
+
+### 7-l. 繳交狀況（原「即時繳交」按鈕）與讀取量原則（2026-09-29 教師指定）
+- **讀取量原則：只讀目前這個班**。Firestore 免費額度每天 5 萬次讀取，全校一學期約 9,000 份繳交；任何「每次開頁面就讀全部繳交」的做法到學期末都會爆。因此：
+  - 學習單下拉選單**不讀 submissions、不顯示份數**，只列 `worksheets.json`＋`worksheets` 集合；某班交過但還沒登錄的學習單，在打開那班的繳交紀錄時補進選單（`window._wsExtra`）。
+  - 主清單 `loadSubs()` 查 `worksheetId＋grade＋className`（三個等式，不需要複合索引）；換班級才重讀。只有「其他（未匹配）」讀整份學習單。
+  - `live-submit.html` 的監聽與「清除繳交紀錄」同樣加上年級＋班級條件，別班繳交不觸發讀取。
+- **「繳交狀況」面板**：兩個分頁，右上可切班級。
+  - **即時繳交**：嵌入 `live-submit.html?cid&ws&embed=1`（切離分頁或關閉面板就移除 iframe，停止監聽）；「開新視窗」保留原本可拖到投影幕的彈出視窗。「上課」按鈕仍直接開彈出視窗。
+  - **繳交紀錄**：打開某班才讀（該班全部繳交＋名單＋請假紀錄，約 50 筆）。每份學習單一張卡：已交 N／名單人數，下面列缺交座號（照課次 L01、L02 排）。點座號 →「刪除這個號碼（這份免交）」或「這份學習單整份忽略」；免交與忽略都能還原。
+  - **永久記住放哪**：免交＝`courses/{班}/absences/{學習單}`（跟即時繳交視窗的「請假」是同一份，兩邊互通）；整份忽略＝`courses/{班}.ignoredWs`；都在既有規則範圍內，不必改 `firestore.rules`。沒有另建「繳交彙總」快取：每次打開讀一個班約 50 筆，比維護一份彙總（還要處理刪除、重繳同步）單純，讀取量也夠低。
+  - **發布缺交名單到 Classroom**：組好公告文字（班級＋每份學習單缺交座號，可編輯）→ 選 Classroom 課程（第一次依課程名稱裡的三碼班級代號預選，之後記在 `courses/{班}.classroomCourseId`）→ 確認後 `POST /api/classroom/announce` 發到訊息串。需要 `classroom.announcements` 權限：舊授權要在「設定 → Google Classroom」重新授權一次，缺權限時會明講。
+- **設定 → 更新**分頁：手動「檢查更新」／「立即更新」，跟頁首自動提示共用 `/api/update/check`、`/api/update/apply`。
 
 ### 7-i. 課表與一鍵「上課」（2026-09-17 教師指定）
 > 動機：上課前的固定動作是「想一下這節是哪一班 → 找到那班這週的學習單 → 開它的 `#admin` → 再開即時繳交視窗」。這四步每節都重複一次，課表既然是固定的，就讓它自己算出來。

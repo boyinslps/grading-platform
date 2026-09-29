@@ -26,7 +26,10 @@
 <body>
 <header>
   <div><h1 id="title">即時繳交</h1><div class="meta" id="meta">載入中…</div></div>
-  <button id="pinBtn">📌 釘選在最上層</button>
+  <div style="display:flex;gap:8px">
+    <button id="clearBtn" style="border:1px solid #EA580C;background:var(--surface);color:#EA580C;border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer">🗑 清除繳交紀錄</button>
+    <button id="pinBtn">📌 釘選在最上層</button>
+  </div>
 </header>
 <div id="grid"></div>
 
@@ -74,7 +77,7 @@ function togglePin(){
 $('#pinBtn').addEventListener('click',togglePin);
 
 if(!cid||!ws){
-  $('#meta').textContent='網址缺少班級或學習單參數，請從主畫面「🟢 即時繳交」按鈕開啟。';
+  $('#meta').textContent='網址缺少班級或學習單參數，請從主畫面「繳交狀況」按鈕開啟。';
 }else{
   var base='https://www.gstatic.com/firebasejs/10.8.0/';
   loadScript(base+'firebase-app-compat.js')
@@ -102,8 +105,10 @@ function boot(db){
     roster.sort(function(a,b){return (a.seatNo||0)-(b.seatNo||0)});
     absentMap=(r[1].exists?r[1].data():{})||{};
     render(curGot);
-    // 只用 worksheetId 單一等式過濾（不需要複合索引），班級/年級收到資料後在前端比對
-    db.collection('submissions').where('worksheetId','==',ws).onSnapshot(function(qs2){
+    // 只監聽這個班級（學習單＋年級＋班級三個等式條件，不需要複合索引）：別班繳交不會觸發讀取
+    var q=db.collection('submissions').where('worksheetId','==',ws);
+    if(course&&course.grade!=null&&course.className!=null)q=q.where('grade','==',course.grade).where('className','==',course.className);
+    q.onSnapshot(function(qs2){
       var got={};qs2.forEach(function(d){var s=d.data();
         if(course&&s.grade===course.grade&&s.className===course.className&&s.studentId!=null)got[s.studentId]=true;});
       curGot=got;
@@ -138,6 +143,44 @@ function boot(db){
   }
   $('#grid').addEventListener('click',onGridClick);
   window._onGridClick=onGridClick;   // 給釘選視窗（另一個 document）綁同一個處理函式用
+
+  // 清除繳交紀錄：真的刪除 Firestore 的 submissions 文件（這個班級＋這份學習單），
+  // 燈會馬上跟著熄滅（onSnapshot 監聽同一批資料）；同一份資料也是老師端評分列表的來源，
+  // 所以這裡刪掉之後，教師評分平台看這份學習單、這個班級也會變成「尚無繳交」——
+  // 是拿來讓同一班「重新交一次」用的，不是只重置畫面顯示。
+  $('#clearBtn').addEventListener('click',function(){
+    var got=Object.keys(curGot).length;
+    if(!got){alert('目前沒有任何已繳交的紀錄可以清除。');return;}
+    var label=(course?course.name:cid)+' · '+ws;
+    if(!confirm('確定要清除「'+label+'」目前 '+got+' 筆已繳交的紀錄嗎？\n\n這會刪除學生的作答與評分資料，無法復原，教師評分平台裡也會一併消失。'))return;
+    if(!confirm('再次確認：真的要刪除嗎？這個動作沒有辦法復原。'))return;
+    var btn=this;btn.disabled=true;btn.textContent='清除中…';
+    var cq=db.collection('submissions').where('worksheetId','==',ws);
+    if(course&&course.grade!=null&&course.className!=null)cq=cq.where('grade','==',course.grade).where('className','==',course.className);
+    cq.get().then(function(qs){
+      var refs=[];
+      qs.forEach(function(d){var s=d.data();
+        if(course&&s.grade===course.grade&&s.className===course.className)refs.push(d.ref);});
+      var batches=[];
+      for(var i=0;i<refs.length;i+=450){
+        var batch=db.batch();
+        refs.slice(i,i+450).forEach(function(r){batch.delete(r);});
+        batches.push(batch.commit());
+      }
+      if(absRef)batches.push(absRef.delete().catch(function(){}));
+      return Promise.all(batches).then(function(){return refs.length;});
+    }).then(function(n){
+      absentMap={};
+      btn.disabled=false;btn.textContent='🗑 清除繳交紀錄';
+      toastMsg('已清除 '+n+' 筆繳交紀錄');
+    }).catch(function(e){
+      btn.disabled=false;btn.textContent='🗑 清除繳交紀錄';
+      alert('清除失敗：'+e.message);
+    });
+  });
+  function toastMsg(msg){
+    var m=$('#meta');var old=m.textContent;m.textContent=msg;setTimeout(function(){if(m.textContent===msg)m.textContent=old;},2500);
+  }
 }
 </script>
 </body>
