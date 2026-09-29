@@ -21,6 +21,12 @@ service cloud.firestore {
         allow create, update: if request.auth != null
                               && request.auth.uid == uid; // 學生只能寫自己那筆
       }
+      // 即時投票／評分（例如 L03 三網站可信度星級投票），每人一筆、全班即時看彙總
+      match /votes/{uid} {
+        allow read: if true;
+        allow create, update: if request.auth != null
+                              && request.auth.uid == uid;
+      }
     }
 
     // --- 學生繳交（評分平台；見《學習單資料與提交規範》）---
