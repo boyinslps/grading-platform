@@ -42,18 +42,22 @@ service cloud.firestore {
       allow delete: if isTeacher();
     }
 
-    // --- 學生自己的作品取回（例：四上 L03「我的宣言」）---
-    // 繳交成功後把宣言另存一份；學生填好年級／班級／座號，用文件 id 直接 get 拿回自己寫過的內容。
-    // 文件 id：{worksheetId}__{grade}-{className}-{studentId}。只開放 get（要知道 id 才拿得到），
-    // 不開放 list，避免有人一次撈全班；老師能 list／刪除。
-    match /declarations/{id} {
+    // --- 學生暫存區：學生自己的作品取回（通用；例：四上 L03「我的宣言」）---
+    // 繳交成功後把要還給學生的產出另存一份；學生填好年級／班級／座號，用文件 id 直接 get 拿回。
+    // 文件 id：{worksheetId}__{grade}-{className}-{studentId}__{kind}（一份學習單可有多個 kind）。
+    // 內容形狀：{ worksheetId, kind, grade, className, studentId, data:{…}, text, updatedAt }。
+    // 只開放 get（要知道 id 才拿得到），不開放 list，避免有人一次撈全班；老師能 list／刪除。
+    // 規則不綁欄位，新的學習單直接沿用，不必為它改規則；只限制身分為數字、欄位數與文字長度。
+    match /studentWork/{id} {
       allow get: if request.auth != null;
       allow list: if isTeacher();
       allow create, update: if request.auth != null
+        && request.resource.data.keys().size() <= 12
         && (!('grade' in request.resource.data) || isNum(request.resource.data.grade))
         && (!('className' in request.resource.data) || isNum(request.resource.data.className))
         && (!('studentId' in request.resource.data) || isNum(request.resource.data.studentId))
-        && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() <= 600));
+        && (!('kind' in request.resource.data) || (request.resource.data.kind is string && request.resource.data.kind.size() <= 40))
+        && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() <= 2000));
       allow delete: if isTeacher();
     }
 
