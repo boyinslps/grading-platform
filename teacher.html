@@ -236,6 +236,7 @@
           <select id="wsSelect" disabled style="font-size:13px;font-weight:600;border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:8px;padding:7px 11px;max-width:220px"><option value="">選擇學習單…</option></select>
           <button class="btn" id="newWs" disabled>新增學習單</button>
           <button class="btn" id="editRoster" disabled>編輯名單</button>
+          <button class="btn" id="addManual" disabled title="學生忘記交時，老師在後台幫他補一筆成績條目">補登學生</button>
           <button class="btn" id="liveSubBtn">繳交狀況</button>
           <button class="btn" id="wsSettings" disabled>學習單設定</button>
           <button class="btn" id="refreshSubs" disabled title="重新向資料庫抓一次目前這份學習單的繳交資料">🔄 重新整理</button>
@@ -431,6 +432,28 @@
       <button class="btn btn-primary" id="rosterSave">儲存</button>
     </div>
     <div class="note" id="rosterNote"></div>
+  </div>
+</div>
+
+<!-- 補登學生：忘記交的學生，老師在後台補一筆成績條目 -->
+<div class="gate off" id="manualModal">
+  <div class="panel" style="width:min(460px,100%);max-height:88vh;overflow:auto">
+    <h2 id="manualTitle">補登學生</h2>
+    <p>勾選這份學習單<b>還沒有繳交紀錄</b>的學生，幫他補一筆。可以先補空紀錄，之後在「批改」輸入分數；也可以在這裡直接給一個統一分數。</p>
+    <div id="manualInfo" class="note" style="margin:0 0 8px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <button class="btn" id="manualAll" type="button" style="padding:4px 10px">全選</button>
+      <button class="btn" id="manualNone" type="button" style="padding:4px 10px">全部取消</button>
+    </div>
+    <div id="manualRows" style="max-height:38vh;overflow:auto;border:1px solid var(--line2);border-radius:8px;padding:4px 10px"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px">統一分數（選填）
+      <input id="manualScore" type="number" min="0" style="width:90px;padding:6px 9px;border:1px solid var(--line2);border-radius:8px">
+      <span class="hint" style="font-size:12px;color:var(--muted)">留空＝先不評分</span></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn" id="manualCancel">取消</button>
+      <button class="btn btn-primary" id="manualGo">補登所選學生</button>
+    </div>
+    <div class="note" id="manualNote"></div>
   </div>
 </div>
 
@@ -982,7 +1005,7 @@ function fetchWsTitle(id,url,el){
 function selectWs(id,w){
   curWs=id; curWsCfg={title:(w&&w.title)||id,category:(w&&w.category)||'',url:(w&&w.url)||'',summary:(w&&w.summary)||'',answerKey:(w&&w.answerKey)||null,rubric:(w&&w.rubric)||null,questions:(w&&w.questions)||null,scoring:(w&&w.scoring)||null,verdicts:{}};
   $('#settingsPanel').hidden=true;
-  ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs'].forEach(function(x){$('#'+x).disabled=false;});
+  ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs','addManual'].forEach(function(x){$('#'+x).disabled=false;});
   db.collection('worksheets').doc(id).get().then(function(d){
     if(d.exists){var c=d.data();curWsCfg.title=c.title||curWsCfg.title;curWsCfg.category=c.category||curWsCfg.category;curWsCfg.url=c.url||curWsCfg.url;curWsCfg.summary=c.summary||curWsCfg.summary;curWsCfg.answerKey=c.answerKey||curWsCfg.answerKey;curWsCfg.rubric=c.rubric||curWsCfg.rubric;curWsCfg.questions=c.questions||curWsCfg.questions;curWsCfg.scoring=c.scoring||curWsCfg.scoring;curWsCfg.verdicts=c.verdicts||{};}
     $('#wsMeta').textContent=wsMetaText(id);
@@ -1045,7 +1068,7 @@ function renderSubs(){
     var comp=completionOf(s);
     var pct=[comp!=null?('完成 '+comp+'%'):'',s.accuracyRate!=null?('正確 '+s.accuracyRate+'%'):''].filter(Boolean).join(' · ')||'—';
     var auto=s.accuracyRate!=null?s.accuracyRate:(s.autoScore!=null?s.autoScore:'—');
-    tr.innerHTML='<td>'+wkLabel(s)+'<div class="hint" style="font-weight:400;font-size:11px;margin-top:2px">'+pct+'</div></td>'+
+    tr.innerHTML='<td>'+wkLabel(s)+(s.manual?' <span class="tag sub" title="老師在後台補登的紀錄，沒有學生作答">補登</span>':'')+'<div class="hint" style="font-weight:400;font-size:11px;margin-top:2px">'+pct+'</div></td>'+
       '<td>'+fmtTime(s.submittedAt)+'</td>'+
       '<td>'+auto+'</td>'+
       '<td>'+(s.aiScore!=null?(s.aiScore+'<span class="hint" style="font-weight:400;color:var(--muted)"> / '+(s.aiMax||100)+'</span>'):'—')
@@ -1149,6 +1172,13 @@ function mainOpenQids(){
   var b=bonusSet(),qt=currentQtypes();   // 只看近期繳交，改版前的舊題號不算進開放題滿分
   return Object.keys(qt).filter(function(q){return qt[q]==='open'&&!b[q];}).sort();
 }
+// 整份學習單有沒有主要開放題（決定要不要保留開放題分數）。以學習單為準：沒寫開放題的學生一樣要少掉那一塊，
+// 否則他的非開放題分數池會變成整個總分，等於白送開放題滿分（沒寫反而比寫得普通的人高）。
+function wsHasMainOpen(s){
+  if(mainOpenOf(s).length||mainOpenQids().length)return true;
+  var b=bonusSetOf(s);
+  return (curWsCfg.questions||[]).some(function(q){return q&&q.qid&&!b[q.qid];});
+}
 function mainOpenOf(s){var b=bonusSetOf(s);return Object.keys(effectiveOpenAnswers(s)).filter(function(q){return !b[q];});}
 function bonusOpenOf(s){var b=bonusSetOf(s);return Object.keys(effectiveOpenAnswers(s)).filter(function(q){return b[q];});}
 // 每一題主要開放題都有明確配分時回傳加總；有任何一題沒填就回傳 null（改用手動的保留分數換算）
@@ -1218,6 +1248,7 @@ function openDrawer(s){
     });
     html+='</div>';
   }
+  if(s.manual)html='<div class="note" style="margin:0 0 10px">這是老師補登的紀錄，沒有學生作答內容。可以直接在下方輸入最終分數，或按「計算分數」依規則算出（沒寫的題目視為沒作答）。</div>'+html;
   html+='<div id="gradeBox"></div>';
   html+='<button class="btn btn-primary" id="gradeRun" style="width:100%;margin:12px 0">'+(storedGrade(s)?'重新評分':'計算分數')+'（正確率＋AI＋加分）</button>';
   html+='<div class="ans" style="border-color:var(--score-border)"><div class="q">最終分數（可手動調整；有加分題時可能超過 100）</div>'
@@ -1291,7 +1322,10 @@ function calcScore(s,cfg,aiScore,bonusScore,aiMax){
   // 加分題不進扣分池、答對才加分（《學習單資料與提交規範》§2-b）
   var qids=Object.keys(combine).filter(function(q){return !bset[q];});
   var objBonusQids=Object.keys(combine).filter(function(q){return bset[q];});
-  var hasOpen=mainOpenOf(s).length>0;   // 開放題只有加分題時，不保留開放題分數
+  // 這份學習單有的非開放題，這位學生的繳交裡卻沒有（整題沒交、補登的空紀錄）＝沒作答，照樣扣分
+  var stQt=s.qtypes||{};
+  nonOpenQids().forEach(function(q){if(!(q in combine)&&!bset[q]&&stQt[q]!=='open'&&qids.indexOf(q)<0)qids.push(q);});
+  var hasOpen=wsHasMainOpen(s);   // 看整份學習單有沒有主要開放題，不是看這位學生有沒有寫；開放題只有加分題時，不保留開放題分數
   var base=cfg.base||100,deduction=cfg.deduction||0;
   var openWeight=hasOpen?(cfg.openWeight||0):0,basePool;
   if(!qids.length){basePool=0;if(hasOpen)openWeight=base;}          // 全開放題：AI 拿走整個總分
@@ -1435,6 +1469,7 @@ function saveScore(s){
     gradedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   if(Object.keys(bonusTiers).length){patch.bonusTiers=bonusTiers;patch.bonusScore=currentBonusScore();}
+  if(s.manual){patch.manualScore=true;s.manualScore=true;}   // 補登紀錄的分數是老師給的，批次評分不重算
   db.collection('submissions').doc(s._id).update(patch).then(function(){note.style.color='var(--ok)';note.textContent='已儲存並標記為已評分。';
     s.totalScore=Number(f);s.status='graded';s.autoScore=patch.autoScore;s.aiScore=patch.aiScore;s.aiMax=patch.aiMax;
     s.aiScores=patch.aiScores;s.aiDetails=patch.aiDetails;s.aiFlags=[];s.aiFeedback=patch.aiFeedback;
@@ -1445,8 +1480,8 @@ function saveScore(s){
 // AI 批次評分：老師按一次評完整個班級。後端逐題評（同一題的全班作答放同一個 prompt、用同一套標準），
 // 各題平行呼叫；沒有開放題的學生不佔 AI，本地直接算完；最後所有成績用 Firestore batch 寫入。
 function batchGrade(btn){
-  var list=currentSubs();
-  if(!list.length){$('#mainNote').textContent='目前這個班級沒有可評分的繳交。';return;}
+  var all=currentSubs(),list=all.filter(function(s){return !s.manualScore;}),keptManual=all.length-list.length;   // 補登並給了分數的不重算
+  if(!list.length){$('#mainNote').textContent=keptManual?'目前這個班級只有補登紀錄，分數是老師給的，批次評分不會更動。':'目前這個班級沒有可評分的繳交。';return;}
   btn.disabled=true;
   var origBtnText=btn.textContent;
   var aiEnabled=$('#aiEnableChk').checked;
@@ -1477,7 +1512,7 @@ function batchGrade(btn){
       btn.disabled=false;btn.textContent=origBtnText;renderSubs();
       var msg='批次評分完成：'+updates.length+'／'+list.length+' 份已寫入（'+withoutOpen.length+' 位無開放題直接採計算結果'
         +(withOpen.length?(aiEnabled?'；'+withOpen.length+' 位有開放題，逐題交給 AI 判斷':'；'+withOpen.length+' 位有開放題但未啟用 AI，維持未評分，請到批改抽屜手動評'):'')
-        +'）'+(aiSummary||'')+'。分數可在批改抽屜逐題調整。';
+        +'）'+(aiSummary||'')+(keptManual?'；'+keptManual+' 位補登分數維持原樣':'')+'。分數可在批改抽屜逐題調整。';
       $('#mainNote').textContent=msg;
     }).catch(function(e){btn.disabled=false;btn.textContent=origBtnText;renderSubs();$('#mainNote').textContent='寫入分數失敗：'+friendlyErr(e);});
   }
@@ -1581,6 +1616,59 @@ $('#rosterSave').addEventListener('click',function(){
     note.style.color='var(--ok)';note.textContent='已儲存。';
     setTimeout(function(){$('#rosterModal').classList.add('off');},600);
   }).catch(function(e){note.style.color='var(--warn)';note.textContent='儲存失敗：'+e.message;});
+});
+// ---- 補登學生（見 SPEC §7-m）：學生忘記交，老師勾選名單上的人，幫他補一筆繳交紀錄 ----
+// 補登的紀錄跟學生自己交的同一個位置（submissions/{學習單}__{年}-{班}-{座號}），多一個 manual:true；
+// 沒有任何作答內容，所以非開放題與開放題都算沒寫，分數由老師在「批改」輸入，或在這裡直接給統一分數。
+function manualCourse(){return (window._courses||[]).filter(function(c){return c.id===curCourse;})[0];}
+$('#addManual').addEventListener('click',function(){
+  var course=manualCourse();
+  if(!curWs){alert('請先選一份學習單。');return;}
+  if(!course||course.grade==null||course.className==null){alert('請先在左側選一個已匯入名單的班級。');return;}
+  $('#manualTitle').textContent='補登學生 · '+(course.name||curCourse)+' · '+(curWsCfg.title||curWs);
+  $('#manualRows').innerHTML='';$('#manualInfo').textContent='';$('#manualScore').value='';
+  $('#manualNote').style.color='var(--muted)';$('#manualNote').textContent='載入名單與最新繳交…';
+  $('#manualGo').disabled=true;
+  $('#manualModal').classList.remove('off');
+  // 先向伺服器重讀一次這班的繳交，避免學生剛好在別處交了、老師又補一筆把它蓋掉
+  Promise.all([loadSubs(curWs,true),db.collection('courses').doc(curCourse).collection('students').get()]).then(function(r){
+    var have={};currentSubs().forEach(function(s){have[Number(s.studentId)]=1;});
+    var roster=[];r[1].forEach(function(d){roster.push(Object.assign({id:d.id},d.data()));});
+    roster.sort(function(a,b){return (a.seatNo||0)-(b.seatNo||0);});
+    if(!roster.length){$('#manualNote').style.color='var(--warn)';$('#manualNote').textContent='這個班級還沒有名單，請先按「編輯名單」或匯入名單。';return;}
+    var missing=roster.filter(function(x){return !have[Number(x.seatNo)];});
+    $('#manualInfo').textContent='名單 '+roster.length+' 人，已有繳交紀錄 '+(roster.length-missing.length)+' 人，還沒有 '+missing.length+' 人。';
+    $('#manualRows').innerHTML=missing.map(function(x){
+      return '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:14px"><input type="checkbox" class="mChk" value="'+esc(x.seatNo)+'">'
+        +esc(x.seatNo)+' 號'+(x.name?'　'+esc(x.name):'')+'</label>';
+    }).join('')||'<div class="note" style="padding:8px 0">名單上的每個人都已經有這份學習單的繳交紀錄。</div>';
+    $('#manualNote').textContent='';$('#manualGo').disabled=!missing.length;
+  }).catch(function(e){$('#manualNote').style.color='var(--warn)';$('#manualNote').textContent='讀取失敗：'+friendlyErr(e);});
+});
+$('#manualCancel').addEventListener('click',function(){$('#manualModal').classList.add('off');});
+$('#manualAll').addEventListener('click',function(){document.querySelectorAll('#manualRows .mChk').forEach(function(c){c.checked=true;});});
+$('#manualNone').addEventListener('click',function(){document.querySelectorAll('#manualRows .mChk').forEach(function(c){c.checked=false;});});
+$('#manualGo').addEventListener('click',function(){
+  var note=$('#manualNote'),course=manualCourse();
+  var seats=[].map.call(document.querySelectorAll('#manualRows .mChk:checked'),function(c){return Number(c.value);});
+  if(!seats.length){note.style.color='var(--warn)';note.textContent='請先勾選要補登的學生。';return;}
+  var raw=$('#manualScore').value.trim(),score=null;
+  if(raw!==''){score=Number(raw);if(!isFinite(score)||score<0){note.style.color='var(--warn)';note.textContent='統一分數要是 0 以上的數字，或留空。';return;}}
+  if(!confirm('要為 '+seats.length+' 位學生補登「'+(curWsCfg.title||curWs)+'」嗎？\n'+(score!=null?'每人給 '+score+' 分，狀態為已評分。':'先不給分，之後到「批改」輸入分數。')))return;
+  var btn=this;btn.disabled=true;note.style.color='var(--muted)';note.textContent='補登中…';
+  var ws=curWs,batch=db.batch();
+  seats.forEach(function(seat){
+    var payload={worksheetId:ws,worksheetTitle:curWsCfg.title||ws,grade:course.grade,className:course.className,studentId:seat,
+      answers:{},qtypes:{},scoreAnswers:{},experienceAnswers:{},openAnswers:{},
+      manual:true,status:'submitted',submittedAt:firebase.firestore.FieldValue.serverTimestamp()};
+    if(score!=null){payload.totalScore=score;payload.status='graded';payload.manualScore=true;payload.aiFlags=[];payload.gradedAt=firebase.firestore.FieldValue.serverTimestamp();}
+    batch.set(db.collection('submissions').doc(ws+'__'+course.grade+'-'+course.className+'-'+seat),payload);
+  });
+  batch.commit().then(function(){
+    $('#manualModal').classList.add('off');btn.disabled=false;
+    $('#mainNote').textContent='已補登 '+seats.length+' 位（座號 '+seats.join('、')+'）'+(score!=null?'，每人 '+score+' 分。':'。還沒給分，請到「批改」輸入分數。');
+    return ws===curWs?loadSubs(ws,true):null;
+  }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='補登失敗：'+friendlyErr(e);});
 });
 $('#nwCancel').addEventListener('click',function(){$('#nwModal').classList.add('off');});
 $('#nwUrl').addEventListener('input',function(){if(nwIdAuto)$('#nwId').value=deriveId(this.value.trim());});
@@ -1700,7 +1788,7 @@ $('#aiSave').addEventListener('click',function(){
 // 題號要出現在其中至少 30% 的繳交才算（擋掉零星幾份舊版繳交），題型取最新那份的
 function currentQtypes(){
   var ms=function(s){var t=s.submittedAt;return t&&t.toMillis?t.toMillis():(t&&t.seconds?t.seconds*1000:0);};
-  var list=subsCache.slice().sort(function(a,b){return ms(b)-ms(a);});
+  var list=subsCache.filter(function(s){return !s.manual;}).sort(function(a,b){return ms(b)-ms(a);});   // 補登的空紀錄不代表學習單長相
   if(!list.length)return {};
   var cut=ms(list[0])-3*86400000,type={},cnt={},n=0;
   list.forEach(function(s){if(ms(s)&&ms(s)<cut)return;n++;
@@ -2173,7 +2261,7 @@ $('#wsDelete').addEventListener('click',function(){
     $('#settingsPanel').hidden=true;
     curWs=null;curWsCfg={};
     $('#wsSelect').value='';
-    ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs'].forEach(function(x){$('#'+x).disabled=true;});
+    ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs','addManual'].forEach(function(x){$('#'+x).disabled=true;});
     $('#wsMeta').textContent=curCourse?'請從右上角下拉選單選一份學習單。':'從左側選一個班級。';
     $('#stSub').textContent='—';$('#stGraded').textContent='—';$('#stPending').textContent='—';$('#stAvg').textContent='—';
     $('#rows').innerHTML='<tr><td colspan="8"><div class="empty"><div class="t">尚未選擇學習單</div>從右上角下拉選單選一份學習單。</div></td></tr>';
