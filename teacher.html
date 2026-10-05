@@ -89,6 +89,26 @@
   .empty .t{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
   .gate{position:fixed;inset:0;background:rgba(20,24,32,.45);display:grid;place-items:center;padding:24px;z-index:50}
   .gate.off{display:none}
+  /* 即時繳交：右下角綠色圓鈕，點了開置頂小視窗；開著時顯示已交人數，有人剛交就往外擴散一圈 */
+  .liveFab{position:fixed;right:22px;bottom:22px;z-index:30;width:64px;height:64px;border-radius:50%;border:0;padding:0;
+    background:#16A34A;color:#fff;box-shadow:0 8px 22px -6px rgba(22,163,74,.6),0 2px 6px rgba(0,0,0,.15);
+    display:grid;place-items:center;text-align:center;line-height:1.1;font-variant-numeric:tabular-nums;transition:transform .15s,background .2s,opacity .2s}
+  .liveFab:hover{transform:scale(1.07);background:#15803D}
+  .liveFab:active{transform:scale(.96)}
+  .liveFab .lf-l{font-size:11.5px;font-weight:700;letter-spacing:.02em}
+  .liveFab .lf-n{font-size:20px;font-weight:800}
+  .liveFab .lf-d{font-size:11px;font-weight:600;opacity:.85}
+  .liveFab.idle{opacity:.45}
+  .liveFab.idle:hover{transform:none;background:#16A34A}
+  .liveFab.open{box-shadow:0 0 0 4px var(--bg),0 0 0 7px #16A34A,0 8px 22px -6px rgba(22,163,74,.6)}
+  .liveFab::after{content:'';position:absolute;inset:0;border-radius:50%;border:3px solid #16A34A;opacity:0;pointer-events:none}
+  .liveFab.ping::after{animation:fabPing 1.3s ease-out}
+  @keyframes fabPing{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.9)}}
+  .liveFab .lf-dot{position:absolute;top:5px;right:5px;width:11px;height:11px;border-radius:50%;background:#BBF7D0;border:2px solid #16A34A;display:none}
+  .liveFab.open .lf-dot{display:block;animation:fabBlink 1.6s ease-in-out infinite}
+  @keyframes fabBlink{50%{opacity:.25}}
+  .liveFabTip{position:fixed;right:22px;bottom:96px;z-index:30;max-width:280px;background:var(--ink);color:var(--bg);font-size:12.5px;line-height:1.5;padding:8px 12px;border-radius:9px;box-shadow:var(--shadow);opacity:0;transform:translateY(4px);pointer-events:none;transition:opacity .2s,transform .2s}
+  .liveFabTip.show{opacity:.95;transform:none}
   .panel{background:var(--surface);border-radius:14px;box-shadow:var(--shadow);width:min(400px,100%);padding:24px}
   .panel h2{margin:0 0 4px;font-size:17px}.panel p{margin:0 0 16px;font-size:13px;color:var(--muted)}
   .field{margin-bottom:12px}.field label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:5px}
@@ -237,7 +257,7 @@
           <button class="btn" id="newWs" disabled>新增學習單</button>
           <button class="btn" id="editRoster" disabled>編輯名單</button>
           <button class="btn" id="addManual" disabled title="學生忘記交時，老師在後台幫他補一筆成績條目">補登學生</button>
-          <button class="btn" id="liveSubBtn">繳交狀況</button>
+          <button class="btn" id="liveSubBtn" title="這個班每份學習單的缺交座號；即時繳交請按右下角綠色圓鈕">繳交紀錄</button>
           <button class="btn" id="wsSettings" disabled>學習單設定</button>
           <button class="btn" id="refreshSubs" disabled title="重新向資料庫抓一次目前這份學習單的繳交資料">🔄 重新整理</button>
           <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);padding:0 2px" title="勾選才會呼叫 AI 評開放題（並附一句評語）；不勾就只算計分/體驗題，開放題留給老師手動評"><input type="checkbox" id="aiEnableChk" checked style="margin:0">啟用AI</label>
@@ -470,25 +490,18 @@
   </div>
 </div>
 
-<!-- 繳交狀況：即時繳交（嵌入 live-submit.html）＋繳交紀錄（各份學習單的缺交座號，見 SPEC §7-l） -->
+<!-- 即時繳交：右下角綠色圓鈕（見 SPEC §7-m）。登入後才出現 -->
+<button class="liveFab idle" id="liveFab" hidden type="button" aria-label="即時繳交"><span class="lf-dot"></span><span id="liveFabBody"><span class="lf-l">即時<br>繳交</span></span></button>
+<div class="liveFabTip" id="liveFabTip" role="status"></div>
+
+<!-- 繳交紀錄：各份學習單的缺交座號（見 SPEC §7-l）。即時繳交改由右下角綠色圓鈕開置頂小視窗 -->
 <div class="gate off" id="subModal">
   <div class="panel" style="width:min(980px,100%);max-height:92vh;overflow:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <h2 style="margin:0">繳交狀況</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <h2 style="margin:0">繳交紀錄</h2>
       <div style="display:flex;gap:8px;align-items:center"><select id="subCourse" style="padding:6px 9px;border:1px solid var(--line2);border-radius:7px"></select><button class="btn" id="subClose">關閉</button></div>
     </div>
-    <div class="tabbar" id="subTabbar" style="margin-top:10px">
-      <button class="tab-btn on" data-tab="live">即時繳交</button>
-      <button class="tab-btn" data-tab="log">繳交紀錄</button>
-    </div>
-    <div data-subpage2="live">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-        <span class="note" id="subLiveNote" style="margin:0;flex:1"></span>
-        <button class="btn" id="subLivePop">開新視窗（可拖到投影幕）</button>
-      </div>
-      <iframe id="subLiveFrame" title="即時繳交" style="width:100%;height:62vh;border:1px solid var(--line2);border-radius:10px;background:var(--surface)"></iframe>
-    </div>
-    <div data-subpage2="log" hidden>
+    <div data-subpage2="log">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <span class="note" id="subLogNote" style="margin:0;flex:1"></span>
         <button class="btn" id="subRebuild" title="重新讀取這個班的繳交紀錄">重新整理</button>
@@ -712,6 +725,7 @@ function onLoggedIn(u){
   $('#newWs').disabled=false;          // 新增學習單
   $('#aiBtn').hidden=false;            // AI 評分設定
   $('#ttBtn').hidden=false;            // 課表
+  $('#liveFab').hidden=false;          // 即時繳交綠色圓鈕
   Promise.all([loadCourses(),loadWorksheets()]).then(loadTimetable,loadTimetable);
 }
 $('#loginBtn').onclick=function(){
@@ -776,6 +790,7 @@ function renderCourseList(){
 function selectCourse(cid){
   curCourse=cid;
   renderCourseList();
+  liveFabSync();
   var course=(window._courses||[]).filter(function(c){return c.id===cid;})[0];
   $('#wsTitle').textContent=course?(course.name||cid):(cid==='__other__'?'其他（未匹配班級座號）':'尚未選擇班級');
   $('#editRoster').disabled=!(cid&&cid!=='__other__');
@@ -787,51 +802,110 @@ function selectCourse(cid){
     $('#rows').innerHTML='<tr><td colspan="8"><div class="empty"><div class="t">尚未選擇學習單</div>從右上角下拉選單選一份學習單。</div></td></tr>';
   }
 }
-// ---- 即時繳交：開一個獨立彈出視窗（live-submit.html），可以拖到投影幕，不佔主畫面 ----
+// ---- 即時繳交（見 SPEC §7-m）：右下角綠色圓鈕 → 置頂小視窗 ----
+// 置頂用 Document Picture-in-Picture：開出來的小視窗會浮在所有視窗（含 Classroom、簡報）最上層，
+// 裡面放 live-submit.html?pip=1。瀏覽器不支援（Chrome／Edge 116 以前、Firefox、Safari）才退回一般彈出視窗。
+// 小視窗是這個分頁開的：主畫面分頁關掉或重新整理，小視窗也會跟著關。
+var live={pip:null,pop:null,cid:null,ws:null,got:null,need:null,done:false};
+function liveUrl(cid,ws,pip){return 'live-submit.html?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(ws)+(pip?'&pip=1':'');}
+function liveIsOpen(){return isWinOpen(live.pip)||isWinOpen(live.pop);}
+function liveTarget(cid,ws){live.cid=cid;live.ws=ws;live.got=null;live.need=null;live.done=false;liveFabSync();}
+function openLivePopup(cid,ws){
+  var w=window.open(liveUrl(cid,ws,false),'liveSub_'+cid+'_'+ws,'width=900,height=640,menubar=no,toolbar=no,location=no,status=no');
+  if(!w)return false;
+  live.pop=w;liveTarget(cid,ws);
+  clearInterval(live._poll);   // 一般視窗沒有關閉事件可聽，每秒看一次，關掉了就把圓鈕恢復原狀
+  live._poll=setInterval(function(){if(!isWinOpen(live.pop)){clearInterval(live._poll);live.pop=null;liveFabSync();}},1000);
+  return true;
+}
+// 回傳 Promise<boolean>。一定要在點擊當下同步呼叫：置頂小視窗需要「剛點擊」的使用者動作
 function openLiveWindow(cid,ws){
-  var url='live-submit.html?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(ws);
-  return window.open(url,'liveSub_'+cid+'_'+ws,'width=900,height=640,menubar=no,toolbar=no,location=no,status=no');
+  if(!('documentPictureInPicture' in window))return Promise.resolve(openLivePopup(cid,ws));
+  if(isWinOpen(live.pip)){   // 已經開著：換成這班／這份，不另開
+    if(live.cid!==cid||live.ws!==ws){live.pip.document.querySelector('iframe').src=liveUrl(cid,ws,true);liveTarget(cid,ws);}
+    return Promise.resolve(true);
+  }
+  var p;try{p=documentPictureInPicture.requestWindow({width:460,height:400});}catch(e){p=Promise.reject(e);}
+  return p.then(function(w){
+    live.pip=w;
+    w.document.title='即時繳交';
+    w.document.body.style.cssText='margin:0;height:100vh;overflow:hidden;background:#12141a';
+    var f=w.document.createElement('iframe');
+    f.src=liveUrl(cid,ws,true);f.title='即時繳交';
+    f.style.cssText='border:0;width:100%;height:100%;display:block';
+    w.document.body.appendChild(f);
+    w.addEventListener('message',onLiveMsg);
+    w.addEventListener('pagehide',function(){if(live.pip===w){live.pip=null;liveFabSync();}});
+    liveTarget(cid,ws);
+    return true;
+  }).catch(function(){return openLivePopup(cid,ws);});
 }
-function openLiveSub(){
-  if(!curCourse||curCourse==='__other__'){alert('請先在左側選一個班級。');return;}
-  if(!curWs){alert('請先在左側選一份學習單。');return;}
-  openLiveWindow(curCourse,curWs);
+// live-submit.html 每次人數變動都會回報（置頂小視窗→送到 PiP 視窗；一般視窗→送到 opener＝這裡）
+function onLiveMsg(e){
+  if(e.origin!==location.origin)return;
+  var d=e.data||{};
+  if(d.type!=='liveCount'||d.cid!==live.cid||d.ws!==live.ws)return;
+  live.got=d.got;live.need=d.need;live.done=!!d.done;
+  liveFabSync();
+  if(d.fresh){var f=$('#liveFab');f.classList.remove('ping');void f.offsetWidth;f.classList.add('ping');}
 }
-// ---- 繳交狀況（見 SPEC §7-l）：即時繳交＝嵌入 live-submit.html；繳交紀錄＝這個班每份學習單的缺交座號 ----
+window.addEventListener('message',onLiveMsg);
+function liveFabTip(msg){var t=$('#liveFabTip');t.textContent=msg;t.classList.add('show');clearTimeout(liveFabTip._t);liveFabTip._t=setTimeout(function(){t.classList.remove('show');},3200);}
+function liveFabSync(){
+  var f=$('#liveFab');if(!f)return;
+  var can=!!(curCourse&&curCourse!=='__other__'&&curWs), open=liveIsOpen();
+  f.classList.toggle('idle',!can&&!open);
+  f.classList.toggle('open',open);
+  if(open&&live.got!=null){
+    $('#liveFabBody').innerHTML=live.done?'<span class="lf-l">全部<br>交齊</span>':'<span class="lf-n">'+live.got+'</span><br><span class="lf-d">/ '+live.need+'</span>';
+  }else{
+    $('#liveFabBody').innerHTML='<span class="lf-l">即時<br>繳交</span>';
+  }
+  var who=open?(courseLabel(live.cid)+' · '+wsLabel(live.ws)):'';
+  f.title=open?('即時繳交：'+who+'\n再按一次關掉小視窗'+(live.cid!==curCourse||live.ws!==curWs?'；目前畫面是別班／別份，按住 Shift 再按可換成目前這份':''))
+    :(can?'即時繳交：開一個浮在最上層的小視窗（'+courseLabel(curCourse)+' · '+wsLabel(curWs)+'）':'先在左側選班級、右上角選學習單，才能看即時繳交');
+}
+$('#liveFab').addEventListener('click',function(e){
+  var can=!!(curCourse&&curCourse!=='__other__'&&curWs);
+  if(liveIsOpen()){
+    var same=live.cid===curCourse&&live.ws===curWs;
+    if(e.shiftKey&&can&&!same){openLiveWindow(curCourse,curWs);return;}   // Shift：換成目前畫面這份
+    if(isWinOpen(live.pip))live.pip.close();
+    if(isWinOpen(live.pop))live.pop.close();
+    live.pip=null;live.pop=null;liveFabSync();
+    return;
+  }
+  if(!can){
+    liveFabTip((!curCourse||curCourse==='__other__')?'先在左側選一個班級。':'先在右上角選一份學習單。');
+    var f=this;f.classList.remove('ping');void f.offsetWidth;f.classList.add('ping');
+    return;
+  }
+  openLiveWindow(curCourse,curWs).then(function(ok){
+    if(!ok)liveFabTip('視窗被瀏覽器攔住了。請點網址列右邊的圖示「允許彈出式視窗」，再按一次綠色圓鈕。');
+  });
+});
+// ---- 繳交紀錄（見 SPEC §7-l）：這個班每份學習單的缺交座號 ----
 // 讀取只在打開某班的繳交紀錄時發生（該班全部繳交＋名單＋請假紀錄），不掃整個資料庫。
 // 永久記住的資料：免交座號＝courses/{班}/absences/{學習單}（跟即時繳交視窗的「請假」同一份）；
 // 整份忽略＝courses/{班}.ignoredWs；Classroom 課程對應＝courses/{班}.classroomCourseId。
 var subLog={cid:null,data:null};
 function subCourseObj(cid){return (window._courses||[]).filter(function(c){return c.id===cid;})[0]||null;}
-function subTab(name){
-  document.querySelectorAll('#subTabbar .tab-btn').forEach(function(b){b.classList.toggle('on',b.dataset.tab===name);});
-  document.querySelectorAll('#subModal [data-subpage2]').forEach(function(p){p.hidden=p.dataset.subpage2!==name;});
-  var cid=$('#subCourse').value,fr=$('#subLiveFrame');
-  if(name==='live'){
-    if(!curWs){fr.removeAttribute('src');$('#subLiveNote').textContent='先在右上角選一份學習單，才看得到這份的即時繳交。';$('#subLivePop').disabled=true;return;}
-    $('#subLivePop').disabled=false;
-    $('#subLiveNote').textContent=(subCourseObj(cid)||{}).name+' · '+wsLabel(curWs)+'（點座號可標記請假）';
-    var src='live-submit.html?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(curWs)+'&embed=1';
-    if(fr.getAttribute('src')!==src)fr.setAttribute('src',src);
-  }else{
-    fr.removeAttribute('src');   // 離開即時繳交就停止監聽，不白白消耗讀取
-    if(subLog.cid!==cid||!subLog.data)loadSubLog(cid);else renderSubLog();
-  }
+function showSubLog(){
+  var cid=$('#subCourse').value;
+  if(subLog.cid!==cid||!subLog.data)loadSubLog(cid);else renderSubLog();
 }
-function openSubModal(tab){
+function openSubModal(){
   var list=(window._courses||[]);
   if(!list.length){alert('還沒有班級名單，請先到「設定 → 名單匯入」。');return;}
   var cid=(curCourse&&curCourse!=='__other__')?curCourse:list[0].id;
   $('#subCourse').innerHTML=list.map(function(c){return '<option value="'+esc(c.id)+'"'+(c.id===cid?' selected':'')+'>'+esc(c.name||c.id)+'</option>';}).join('');
   $('#subAnnBox').hidden=true;
   $('#subModal').classList.remove('off');
-  subTab(tab);
+  showSubLog();
 }
-function closeSubModal(){$('#subModal').classList.add('off');$('#subLiveFrame').removeAttribute('src');$('#seatMenu').hidden=true;}
+function closeSubModal(){$('#subModal').classList.add('off');$('#seatMenu').hidden=true;}
 $('#subClose').addEventListener('click',closeSubModal);
-document.querySelectorAll('#subTabbar .tab-btn').forEach(function(b){b.addEventListener('click',function(){subTab(b.dataset.tab);});});
-$('#subCourse').addEventListener('change',function(){subLog={cid:null,data:null};$('#subAnnBox').hidden=true;subTab($('#subTabbar .tab-btn.on').dataset.tab);});
-$('#subLivePop').addEventListener('click',function(){if(curWs)openLiveWindow($('#subCourse').value,curWs);});
+$('#subCourse').addEventListener('change',function(){subLog={cid:null,data:null};$('#subAnnBox').hidden=true;showSubLog();});
 function wsLessonNo(id){var m=String(id).match(/L(\d+)/i);return m?Number(m[1]):999;}
 function wsLabel(id,fallback){
   var m=String(id).match(/L\d+/i),t=((window._wsMeta||{})[id]||{}).title||WS_TITLES[id]||fallback||'';
@@ -1011,6 +1085,7 @@ function selectWs(id,w){
     $('#wsMeta').textContent=wsMetaText(id);
   }).catch(function(){$('#wsMeta').textContent='學習單：'+id;});
   loadSubs(id);
+  liveFabSync();
 }
 function wsMetaText(id){
   var n=(curWsCfg.questions||[]).length;
@@ -1555,7 +1630,7 @@ function batchGrade(btn){
 // ---- 新增學習單（貼網址）----
 var nwIdAuto=true;
 $('#newWs').addEventListener('click',function(){$('#nwUrl').value='';$('#nwId').value='';$('#nwCat').value='';$('#nwNote').textContent='';nwIdAuto=true;$('#nwModal').classList.remove('off');});
-$('#liveSubBtn').addEventListener('click',function(){openSubModal(curWs?'live':'log');});
+$('#liveSubBtn').addEventListener('click',function(){openSubModal();});
 $('#wsSelect').addEventListener('change',function(){
   var id=this.value;
   if(!id)return;
@@ -2946,6 +3021,8 @@ function startClass(cid,wsId){
   }
   if(sel)sel.value=wsId;
   selectWs(wsId,meta);
+  // 即時繳交要最先開：置頂小視窗需要「剛點擊」的使用者動作，先開別的視窗可能把這個動作用掉
+  var livePromise=openLiveWindow(cid,wsId);
   var opened=[],alreadyOpen=isWinOpen(wsAdminWindows[wsId]),want=meta.url&&!alreadyOpen?2:1;
   if(meta.url&&!alreadyOpen){
     var w=window.open(meta.url.split('#')[0]+'#admin','wsAdmin_'+wsId);
@@ -2953,14 +3030,16 @@ function startClass(cid,wsId){
   }else if(alreadyOpen){
     opened.push('學習單 Admin（已開著，未重開）');
   }
-  if(openLiveWindow(cid,wsId))opened.push('即時繳交');
-  if(!opened.length){
-    note.textContent='視窗被瀏覽器攔住了，請允許這個網站的彈出視窗後再按一次「上課」。';
-    return;
-  }
-  note.textContent='已開啟：'+opened.join('、')+'（'+courseLabel(cid)+' · '+wsTitleOf(wsId)+'）'
-    +(meta.url?'':'　※這份學習單沒有登錄網址，Admin 沒開；到「新增學習單」補上網址即可。')
-    +(opened.length<want?'　※有一個視窗被瀏覽器攔住，請允許彈出視窗。':'');
+  livePromise.then(function(ok){
+    if(ok)opened.push(isWinOpen(live.pip)?'即時繳交（置頂小視窗）':'即時繳交');
+    if(!opened.length){
+      note.textContent='視窗被瀏覽器攔住了，請允許這個網站的彈出視窗後再按一次「上課」。';
+      return;
+    }
+    note.textContent='已開啟：'+opened.join('、')+'（'+courseLabel(cid)+' · '+wsTitleOf(wsId)+'）'
+      +(meta.url?'':'　※這份學習單沒有登錄網址，Admin 沒開；到「新增學習單」補上網址即可。')
+      +(opened.length<want?'　※有一個視窗被瀏覽器攔住，請允許彈出視窗。':'');
+  });
 }
 $('#startClassBtn').addEventListener('click',function(){
   var cid=$('#nowWsSel').dataset.cid||'';
