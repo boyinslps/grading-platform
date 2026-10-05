@@ -41,6 +41,14 @@ def _git(args, cwd, timeout=90):
         return 124, "", "git 執行逾時（網路可能不通）"
 
 
+def _fetch(root, branch):
+    """git fetch。origin 若是 SSH 網址（git@github.com:），改走 HTTPS 去抓——
+    儲存庫是公開的，唯讀 fetch 不需要金鑰；安裝端沒有 SSH 金鑰時才不會 Permission denied。
+    只換這次 fetch 的網址（-c url.insteadOf），不動使用者 .git/config 裡的 origin。"""
+    return _git(["-c", "url.https://github.com/.insteadOf=git@github.com:",
+                 "fetch", "--quiet", "origin", branch], root)
+
+
 def _version(root, ref=None):
     """VERSION 檔的內容＝給人看的版本號；給 ref 就讀那個 ref 上的版本。"""
     if ref:
@@ -78,7 +86,7 @@ def check_update(root, branch=BRANCH):
         return {"ok": True, "isGit": False, "behind": 0,
                 "message": "這份安裝不是用 git 取得的（可能是直接複製資料夾過來），"
                            "所以沒辦法自動更新。改用 git clone 安裝一次，之後就能一鍵更新。"}
-    rc, _, err = _git(["fetch", "--quiet", "origin", branch], root)
+    rc, _, err = _fetch(root, branch)
     if rc != 0:
         return {"ok": False, "isGit": True, "error": "連不上 GitHub：" + (err or "fetch 失敗")}
     # rev-list 失敗時不可以當成「沒有更新」：那會變成畫面上看不出壞掉、永遠不提示更新的靜默故障。
@@ -118,7 +126,7 @@ def apply_update(root, branch=BRANCH):
         return {"ok": False,
                 "error": "這台電腦有還沒提交的修改，為了不蓋掉你的東西，先不更新。\n"
                          "請先處理這些檔案再更新：\n" + files}
-    rc, _, err = _git(["fetch", "--quiet", "origin", branch], root)
+    rc, _, err = _fetch(root, branch)
     if rc != 0:
         return {"ok": False, "error": "連不上 GitHub：" + (err or "fetch 失敗")}
     before = _version(root)
