@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="author" content="資訊老師黃博胤">
 <title>評分平台｜教師端</title>
 <script>
 // 深色模式：在任何 CSS 套用前先讀 localStorage 決定 data-theme，避免先閃一下淺色再變暗（FOUC）。
@@ -40,22 +41,35 @@
   button{font-family:inherit;cursor:pointer}
   .app{display:grid;grid-template-rows:auto auto 1fr;height:100vh}
   /* 頂端「上課」黑底列：固定深色（不跟著淺色/深色模式變），跟下面的學習單管理明確分區 */
-  .nowBar{background:#0E1015;color:#F4F5F7;padding:14px 20px;border-bottom:3px solid #000}
-  .nowBar .nowEyebrow{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#818CF8}
-  .nowBar .nowWhen{font-size:12px;color:#9AA3B8;margin-top:2px}
-  .nowBar .nowClass{font-size:19px;font-weight:700;margin:3px 0 4px;color:#fff}
-  .nowBar .nowWs{font-size:12px;color:#C7CBD6}
-  .nowBar select{font-size:13px;font-weight:600;border:1px solid #3A3F4E;background:#1B1E27;color:#F4F5F7;border-radius:8px;padding:7px 11px;max-width:230px}
-  .nowBar .btn{background:#20232D;border-color:#3A3F4E;color:#F4F5F7}
+  /* 頂端「上課」列：一條細列放完所有資訊（狀態、班級、時間、今日各節、本週學習單、上課鈕），
+     固定深色（不跟著淺色/深色模式變），跟下面的學習單管理明確分區。窄螢幕自動換行。 */
+  .nowBar{background:#0E1015;color:#F4F5F7;padding:7px 16px;border-bottom:2px solid #000;display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap}
+  .nowBar .nowPill{flex:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:#2A2E3A;color:#C7CBD6;white-space:nowrap}
+  .nowBar .nowPill.live{background:#F97316;color:#fff}
+  .nowBar .nowPill.next{background:#312E81;color:#C7D2FE}
+  .nowBar .nowMain{display:flex;align-items:baseline;gap:10px;min-width:0;flex:none;max-width:100%}
+  .nowBar .nowClass{font-size:16px;font-weight:700;color:#fff;white-space:nowrap}
+  .nowBar .nowWhen{font-size:12px;color:#9AA3B8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .nowBar .nowWhen b{color:#FDBA74;font-weight:700}
+  .nowBar .nowToday{flex:1 1 160px;min-width:0;display:flex;gap:5px;overflow-x:auto;scrollbar-width:none}
+  .nowBar .nowToday::-webkit-scrollbar{display:none}
+  .nowBar .nowAct{display:flex;gap:8px;align-items:center;flex:none}
+  .nowBar .nowWs{flex-basis:100%;font-size:11.5px;color:#FBBF24;margin:-2px 0 1px}
+  .nowBar .nowWs:empty{display:none}
+  .nowBar select{font-size:12.5px;font-weight:600;border:1px solid #3A3F4E;background:#1B1E27;color:#F4F5F7;border-radius:7px;padding:5px 9px;max-width:230px}
+  .nowBar .btn{background:#20232D;border-color:#3A3F4E;color:#F4F5F7;padding-top:5px;padding-bottom:5px;font-size:12.5px}
   .nowBar .btn:hover{background:#2A2E3A}
-  .nowBar .btn-primary{background:#4F46E5;border-color:#4F46E5;color:#fff}
+  .nowBar .btn-primary{background:#4F46E5;border-color:#4F46E5;color:#fff;padding-top:5px;padding-bottom:5px}
   .nowBar .btn-primary:hover{background:#4338CA}
   .nowBar .btn:disabled{opacity:.4}
-  .nowBar .chip{background:#1B1E27;border-color:#3A3F4E;color:#F4F5F7}
-  .nowBar .chip:hover{background:#2A2E3A}
+  .nowBar .chip{flex:none;font-size:11.5px;padding:3px 9px;white-space:nowrap;background:#1B1E27;border-color:#3A3F4E;color:#C7CBD6}
+  .nowBar .chip:hover{background:#2A2E3A;color:#fff}
   .nowBar .chip.on{background:#4F46E5;border-color:#4F46E5;color:#fff}
-  .nowBar .note{color:#9AA3B8}
+  .nowBar .chip.past{opacity:.45}
+  .nowBar .note{color:#9AA3B8;font-size:11.5px}
   .topbar{display:flex;align-items:center;gap:14px;padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--line)}
+  .iconBtn{width:28px;height:28px;border-radius:7px;border:1px solid transparent;background:transparent;color:var(--muted);display:grid;place-items:center;padding:0;margin-left:-4px}
+  .iconBtn:hover{background:var(--surface2);border-color:var(--line);color:var(--ink)}
   .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700}
   .brand b{font-size:15px;font-weight:700}.brand span{display:block;font-size:11px;color:var(--muted)}
   .btn{font-size:13px;font-weight:600;border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:8px;padding:7px 13px}
@@ -89,7 +103,7 @@
   .empty .t{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
   .gate{position:fixed;inset:0;background:rgba(20,24,32,.45);display:grid;place-items:center;padding:24px;z-index:50}
   .gate.off{display:none}
-  /* 即時繳交：右下角綠色圓鈕，點了開置頂小視窗；開著時顯示已交人數，有人剛交就往外擴散一圈 */
+  /* 即時繳交：右下角綠色圓鈕，點了開置頂投影視窗；開著時顯示已交人數，有人剛交就往外擴散一圈 */
   .liveFab{position:fixed;right:22px;bottom:22px;z-index:30;width:64px;height:64px;border-radius:50%;border:0;padding:0;
     background:#16A34A;color:#fff;box-shadow:0 8px 22px -6px rgba(22,163,74,.6),0 2px 6px rgba(0,0,0,.15);
     display:grid;place-items:center;text-align:center;line-height:1.1;font-variant-numeric:tabular-nums;transition:transform .15s,background .2s,opacity .2s}
@@ -130,6 +144,13 @@
   .tab-sub .tab-btn{font-size:12px;font-weight:600;color:var(--muted);background:var(--surface);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;cursor:pointer}
   .tab-sub .tab-btn:hover{background:var(--surface2)}
   .tab-sub .tab-btn.on{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent-ink)}
+  .wkGrade{margin-bottom:10px}
+  .wkGrade h4{margin:0 0 6px;font-size:12px;color:var(--muted);font-weight:700}
+  .wkGrade .wkList{display:flex;flex-wrap:wrap;gap:6px}
+  .wkCls{display:flex;align-items:center;gap:6px;border:1px solid var(--line2);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer;user-select:none;background:var(--surface)}
+  .wkCls:has(input:checked){background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent-ink);font-weight:600}
+  .wkCls input{margin:0}
+  .wkCls small{font-size:11px;color:var(--muted);font-weight:400}
   .ttTable{width:100%;min-width:640px;border-collapse:collapse;font-size:12px;table-layout:fixed}
   .ttTable th,.ttTable td{border:1px solid var(--line);padding:4px}
   .ttTable th{background:var(--surface2);font-weight:600;color:var(--muted)}
@@ -216,33 +237,28 @@
 <div class="app">
   <!-- 現在這節：依課表＋當下星期/時間推出來。放最頂端、黑底跟下面的學習單管理區隔開——
        上面是「上課」（切班級＋開本節學習單），下面才是「學習單管理」（選學習單、設定、批改、成績）。 -->
-  <div class="nowBar" id="nowCard" hidden>
-    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-      <div style="flex:1;min-width:230px">
-        <div class="nowEyebrow">🎓 現在上課</div>
-        <div class="nowWhen" id="nowWhen">—</div>
-        <div class="nowClass" id="nowClass">—</div>
-        <div class="nowWs" id="nowWs"></div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="nowWsSel"><option value="">本週學習單…</option></select>
-        <button class="btn btn-primary" id="startClassBtn">上課</button>
-      </div>
-    </div>
-    <div id="todayRow" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px"></div>
-  </div>
   <header class="topbar">
     <div class="logo">評</div>
     <div class="brand"><b>評分平台</b><span>課堂評量與成績管理</span></div>
+    <button class="iconBtn" id="themeToggle" type="button"></button>
     <div style="flex:1"></div>
     <span id="who" class="note" style="margin:0"></span>
-    <button class="btn" id="themeToggle">深色模式</button>
     <button class="btn" id="ttBtn" hidden>課表</button>
     <button class="btn" id="aiBtn" hidden>設定</button>
-    <button class="btn" id="reloadBtn">重新整理</button>
     <button class="btn" id="logoutBtn" hidden>登出</button>
   </header>
 
+  <div class="nowBar" id="nowCard" hidden>
+    <span class="nowPill" id="nowPill">現在上課</span>
+    <div class="nowMain"><span class="nowClass" id="nowClass">—</span><span class="nowWhen" id="nowWhen">—</span></div>
+    <div class="nowToday" id="todayRow"></div>
+    <div class="nowAct">
+      <button class="btn" id="weekWsBtn" title="先選一份學習單，再勾這週要上它的班級">本週學習單</button>
+      <select id="nowWsSel" title="這個班本週上哪一份學習單（選了就存進課表）"><option value="">本週學習單…</option></select>
+      <button class="btn btn-primary" id="startClassBtn" title="切到這班與這份學習單，開學習單 Admin 和即時繳交">上課</button>
+    </div>
+    <div class="nowWs" id="nowWs"></div>
+  </div>
   <main class="work">
     <aside class="side">
       <h3>班級</h3>
@@ -277,7 +293,7 @@
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
           <div style="flex:2;min-width:160px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">標題</label><input id="setTitle" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px;outline:none"></div>
-          <div style="flex:1;min-width:120px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">分類</label><select id="setCat" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"><option value="">未分類</option><option>四上</option><option>四下</option><option>五上</option><option>五下</option></select></div>
+          <div style="flex:1;min-width:120px"><label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">分類</label><select id="setCat" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px" title="留「自動判斷」就照學習單 ID／網址的命名規律分類"><option value="">自動判斷</option><option>四上</option><option>四下</option><option>五上</option><option>五下</option><option>六上</option><option>六下</option><option>競賽</option></select></div>
         </div>
         <div style="margin-bottom:14px">
           <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">這份學習單在教什麼（一句話概要，AI 評開放題前會先看到）</label>
@@ -338,6 +354,7 @@
         </table>
       </div>
       <p class="note" id="mainNote"></p>
+      <p style="margin:18px 96px 4px 0;text-align:right;font-size:11px;color:var(--muted);opacity:.7">made by 資訊老師黃博胤</p>
     </section>
   </main>
 </div>
@@ -378,16 +395,32 @@
   </div>
 </div>
 
+<!-- 本週學習單：先選學習單，再勾要上它的班級（見 SPEC §7-i） -->
+<div class="gate off" id="weekModal">
+  <div class="panel" style="width:min(680px,100%);max-height:90vh;overflow:auto">
+    <h2>本週學習單</h2>
+    <p class="note" style="margin:0 0 12px">先選一份學習單，再勾這週要上它的班級。按「上課」時就會開這一份的 Admin 與即時繳交。</p>
+    <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">學習單</label>
+    <select id="weekWs" style="width:100%;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;font-size:14px;font-weight:600"></select>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:14px 0 8px">
+      <b style="font-size:13px;margin-right:4px">班級</b>
+      <span id="weekGradeBtns" style="display:contents"></span>
+      <button class="btn" type="button" id="weekNone" style="padding:4px 10px;font-size:12px">全部取消</button>
+    </div>
+    <div id="weekClasses"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:14px">
+      <span class="note" id="weekNote" style="margin:0 auto 0 0"></span>
+      <button class="btn" id="weekCancel">關閉</button>
+      <button class="btn btn-primary" id="weekSave">儲存</button>
+    </div>
+  </div>
+</div>
+
 <!-- 課表 -->
 <div class="gate off" id="ttModal">
   <div class="panel" style="width:min(980px,100%);max-height:90vh;overflow:auto">
     <h2>課表</h2>
     <p>課表存在這台電腦的 <code style="font-size:11px">timetable.json</code>（不進 Firestore、不含任何學生資料）。設定好之後，主畫面上方會依當下星期與時間顯示「現在這節」，按「上課」就自動切到該班級、開學習單 Admin 與即時繳交視窗。</p>
-
-    <div class="tabbar" id="ttTabbar">
-      <button class="tab-btn on" data-tab="grid">課表格子</button>
-      <button class="tab-btn" data-tab="week">本週學習單</button>
-    </div>
 
     <div data-ttpage="grid">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -425,11 +458,6 @@
         <div id="ttGrid"></div>
       </div>
       <button class="btn" id="ttAddPeriod" style="margin-top:10px">＋ 新增節次</button>
-    </div>
-
-    <div data-ttpage="week" hidden>
-      <p class="note" style="margin:0 0 10px">每個班級這週上哪一份學習單。按「上課」時就是開這一份的 Admin 與即時繳交視窗；每週換單元只要在這裡（或主畫面「現在這節」旁的下拉）改一次。</p>
-      <div id="ttWeek"></div>
     </div>
 
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
@@ -483,7 +511,7 @@
     <h2>新增學習單</h2>
     <p>貼上學習單的公開網址、選分類即可。標題會自動讀取網頁本身；ID 由網址推出（需與教材 worksheetId 一致）。也可直接編輯 worksheets.json 批次登錄。</p>
     <div class="field"><label>學習單網址</label><input id="nwUrl" placeholder="https://boyinslps.github.io/pcclass/g5/L01/"></div>
-    <div class="field"><label>分類</label><select id="nwCat"><option value="">未分類</option><option>四上</option><option>四下</option><option>五上</option><option>五下</option></select></div>
+    <div class="field"><label>分類</label><select id="nwCat" title="留「自動判斷」就照學習單 ID／網址的命名規律分類"><option value="">自動判斷</option><option>四上</option><option>四下</option><option>五上</option><option>五下</option><option>六上</option><option>六下</option><option>競賽</option></select></div>
     <div class="field"><label>學習單 ID（自動；可修改）</label><input id="nwId" placeholder="g5-L01"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px"><button class="btn" id="nwCancel">取消</button><button class="btn btn-primary" id="nwGo">建立</button></div>
     <div class="note" id="nwNote"></div>
@@ -494,7 +522,7 @@
 <button class="liveFab idle" id="liveFab" hidden type="button" aria-label="即時繳交"><span class="lf-dot"></span><span id="liveFabBody"><span class="lf-l">即時<br>繳交</span></span></button>
 <div class="liveFabTip" id="liveFabTip" role="status"></div>
 
-<!-- 繳交紀錄：各份學習單的缺交座號（見 SPEC §7-l）。即時繳交改由右下角綠色圓鈕開置頂小視窗 -->
+<!-- 繳交紀錄：各份學習單的缺交座號（見 SPEC §7-l）。即時繳交改由右下角綠色圓鈕開置頂視窗 -->
 <div class="gate off" id="subModal">
   <div class="panel" style="width:min(980px,100%);max-height:92vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
@@ -679,7 +707,10 @@ function isDarkNow(){
   if(t==='dark')return true;if(t==='light')return false;
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
-function syncThemeBtn(){$('#themeToggle').textContent=isDarkNow()?'淺色模式':'深色模式';}
+// 月亮＝現在是淺色、按了變深色；太陽＝現在是深色、按了變淺色（教師端不用 emoji，用線條圖示）
+var ICON_MOON='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+var ICON_SUN='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+function syncThemeBtn(){var d=isDarkNow(),b=$('#themeToggle');b.innerHTML=d?ICON_SUN:ICON_MOON;b.title=d?'切換成淺色模式':'切換成深色模式';b.setAttribute('aria-label',b.title);}
 $('#themeToggle').addEventListener('click',function(){
   var next=isDarkNow()?'light':'dark';
   document.documentElement.setAttribute('data-theme',next);
@@ -736,7 +767,12 @@ $('#loginBtn').onclick=function(){
     .catch(function(err){$('#loginNote').textContent='登入失敗：'+err.message;});
 };
 $('#logoutBtn').onclick=function(){auth.signOut();location.reload();};
-$('#reloadBtn').onclick=function(){loadCourses();loadWorksheets();if(curWs)loadSubs(curWs);};
+// 設定有變動（班級名單、名單匯入、課表、本週學習單、學習單設定…）就自動重讀，不用老師自己按重新整理。
+// loadCourses() 會重新選回目前班級，連帶重讀目前這份學習單的繳交。
+function refreshAfterSettings(){
+  subLog={cid:null,data:null};   // 繳交紀錄面板的快取（名單人數可能變了）
+  return Promise.all([loadCourses(),loadWorksheets()]).then(function(){renderNow();},function(){renderNow();});
+}
 
 function matchCourse(s){
   if(s.grade==null||s.className==null)return '__other__';
@@ -802,45 +838,50 @@ function selectCourse(cid){
     $('#rows').innerHTML='<tr><td colspan="8"><div class="empty"><div class="t">尚未選擇學習單</div>從右上角下拉選單選一份學習單。</div></td></tr>';
   }
 }
-// ---- 即時繳交（見 SPEC §7-m）：右下角綠色圓鈕 → 置頂小視窗 ----
-// 置頂用 Document Picture-in-Picture：開出來的小視窗會浮在所有視窗（含 Classroom、簡報）最上層，
-// 裡面放 live-submit.html?pip=1。瀏覽器不支援（Chrome／Edge 116 以前、Firefox、Safari）才退回一般彈出視窗。
-// 小視窗是這個分頁開的：主畫面分頁關掉或重新整理，小視窗也會跟著關。
+// ---- 即時繳交（見 SPEC §7-n）：右下角綠色圓鈕 → 置頂的投影視窗 ----
+// 置頂用 Document Picture-in-Picture：開出來的視窗會浮在所有視窗（含 Classroom、簡報）最上層，
+// 預設就是投影用的大小（可拖到投影幕、可縮放，下次照老師調過的大小開），只開這一個視窗。
+// 裡面放 live-submit.html。瀏覽器不支援（Chrome／Edge 116 以前、Firefox、Safari）才退回一般彈出視窗。
+// 這個視窗是主畫面分頁開的：主畫面分頁關掉或重新整理，它也會跟著關。
 var live={pip:null,pop:null,cid:null,ws:null,got:null,need:null,done:false};
-function liveUrl(cid,ws,pip){return 'live-submit.html?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(ws)+(pip?'&pip=1':'');}
+function liveUrl(cid,ws){return 'live-submit.html?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(ws);}
+function livePipSize(){try{var z=JSON.parse(localStorage.getItem('live_pip_size')||'null');if(z&&z.width>=320&&z.height>=240)return z;}catch(e){}return {width:960,height:680};}
 function liveIsOpen(){return isWinOpen(live.pip)||isWinOpen(live.pop);}
 function liveTarget(cid,ws){live.cid=cid;live.ws=ws;live.got=null;live.need=null;live.done=false;liveFabSync();}
 function openLivePopup(cid,ws){
-  var w=window.open(liveUrl(cid,ws,false),'liveSub_'+cid+'_'+ws,'width=900,height=640,menubar=no,toolbar=no,location=no,status=no');
+  var w=window.open(liveUrl(cid,ws),'liveSub_'+cid+'_'+ws,'width=900,height=640,menubar=no,toolbar=no,location=no,status=no');
   if(!w)return false;
   live.pop=w;liveTarget(cid,ws);
   clearInterval(live._poll);   // 一般視窗沒有關閉事件可聽，每秒看一次，關掉了就把圓鈕恢復原狀
   live._poll=setInterval(function(){if(!isWinOpen(live.pop)){clearInterval(live._poll);live.pop=null;liveFabSync();}},1000);
   return true;
 }
-// 回傳 Promise<boolean>。一定要在點擊當下同步呼叫：置頂小視窗需要「剛點擊」的使用者動作
+// 回傳 Promise<boolean>。一定要在點擊當下同步呼叫：置頂視窗需要「剛點擊」的使用者動作
 function openLiveWindow(cid,ws){
   if(!('documentPictureInPicture' in window))return Promise.resolve(openLivePopup(cid,ws));
   if(isWinOpen(live.pip)){   // 已經開著：換成這班／這份，不另開
-    if(live.cid!==cid||live.ws!==ws){live.pip.document.querySelector('iframe').src=liveUrl(cid,ws,true);liveTarget(cid,ws);}
+    if(live.cid!==cid||live.ws!==ws){live.pip.document.querySelector('iframe').src=liveUrl(cid,ws);liveTarget(cid,ws);}
     return Promise.resolve(true);
   }
-  var p;try{p=documentPictureInPicture.requestWindow({width:460,height:400});}catch(e){p=Promise.reject(e);}
+  var p;try{p=documentPictureInPicture.requestWindow(livePipSize());}catch(e){p=Promise.reject(e);}
   return p.then(function(w){
     live.pip=w;
     w.document.title='即時繳交';
     w.document.body.style.cssText='margin:0;height:100vh;overflow:hidden;background:#12141a';
     var f=w.document.createElement('iframe');
-    f.src=liveUrl(cid,ws,true);f.title='即時繳交';
+    f.src=liveUrl(cid,ws);f.title='即時繳交';
     f.style.cssText='border:0;width:100%;height:100%;display:block';
     w.document.body.appendChild(f);
     w.addEventListener('message',onLiveMsg);
+    w.addEventListener('resize',function(){   // 記住老師拖過的大小，下次照這個大小開
+      clearTimeout(w._rz);w._rz=setTimeout(function(){try{localStorage.setItem('live_pip_size',JSON.stringify({width:w.innerWidth,height:w.innerHeight}));}catch(e){}},400);
+    });
     w.addEventListener('pagehide',function(){if(live.pip===w){live.pip=null;liveFabSync();}});
     liveTarget(cid,ws);
     return true;
   }).catch(function(){return openLivePopup(cid,ws);});
 }
-// live-submit.html 每次人數變動都會回報（置頂小視窗→送到 PiP 視窗；一般視窗→送到 opener＝這裡）
+// live-submit.html 每次人數變動都會回報（置頂視窗→送到 PiP 視窗；一般視窗→送到 opener＝這裡）
 function onLiveMsg(e){
   if(e.origin!==location.origin)return;
   var d=e.data||{};
@@ -862,8 +903,8 @@ function liveFabSync(){
     $('#liveFabBody').innerHTML='<span class="lf-l">即時<br>繳交</span>';
   }
   var who=open?(courseLabel(live.cid)+' · '+wsLabel(live.ws)):'';
-  f.title=open?('即時繳交：'+who+'\n再按一次關掉小視窗'+(live.cid!==curCourse||live.ws!==curWs?'；目前畫面是別班／別份，按住 Shift 再按可換成目前這份':''))
-    :(can?'即時繳交：開一個浮在最上層的小視窗（'+courseLabel(curCourse)+' · '+wsLabel(curWs)+'）':'先在左側選班級、右上角選學習單，才能看即時繳交');
+  f.title=open?('即時繳交：'+who+'\n再按一次關掉視窗'+(live.cid!==curCourse||live.ws!==curWs?'；目前畫面是別班／別份，按住 Shift 再按可換成目前這份':''))
+    :(can?'即時繳交：開一個浮在最上層的投影視窗（'+courseLabel(curCourse)+' · '+wsLabel(curWs)+'）':'先在左側選班級、右上角選學習單，才能看即時繳交');
 }
 $('#liveFab').addEventListener('click',function(e){
   var can=!!(curCourse&&curCourse!=='__other__'&&curWs);
@@ -1041,6 +1082,28 @@ $('#subAnnSend').addEventListener('click',function(){
       db.collection('courses').doc(cid).set({classroomCourseId:courseId},{merge:true}).catch(function(){});
     }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='發布失敗：'+e.message;});
 });
+// ---- 學習單自動分類：沒手動設分類的，照命名規律判斷（見 SPEC §7-o）----
+// 命名規律：ID＝g{年級}[b]-L##（b＝下學期，例 g4-L03＝四上、g4b-L02＝四下、g6-L02＝六上）；
+// 網址＝…/pcclass/g{年級}[b]/L##/；標題裡寫「四上」「五年級下學期」也認得；contest 開頭＝競賽。
+var GRADE_CN={'1':'一','2':'二','3':'三','4':'四','5':'五','6':'六'};
+var CAT_ORDER=['一上','一下','二上','二下','三上','三下','四上','四下','五上','五下','六上','六下','競賽'];
+function autoCategory(id,url,title){
+  var m=/^g([1-6])(b?)[-_]/i.exec(String(id||''))||/\/g([1-6])(b?)\/(?:L\d+|$)/i.exec(String(url||''));
+  if(m)return GRADE_CN[m[1]]+(m[2]?'下':'上');
+  m=/([一二三四五六])(?:年級?)?\s*([上下])(?:學期)?/.exec(String(title||''));
+  if(m)return m[1]+m[2];
+  if(/^contest/i.test(String(id||''))||/\/contest\//i.test(String(url||''))||/競賽/.test(String(title||'')))return '競賽';
+  return '';
+}
+function wsCat(id){var m=(window._wsMeta||{})[id]||{};return m.category||autoCategory(id,m.url,m.title||WS_TITLES[id])||'未分類';}
+// 分類的顯示順序：年級學期由小到大，其他自訂分類接在後面，未分類最後
+function catOrder(groups){
+  var keys=Object.keys(groups);
+  return CAT_ORDER.filter(function(c){return groups[c];})
+    .concat(keys.filter(function(c){return CAT_ORDER.indexOf(c)<0&&c!=='未分類';}).sort())
+    .concat(groups['未分類']?['未分類']:[]);
+}
+function wsSortIds(list){return list.sort(function(a,b){return (wsLessonNo(a)-wsLessonNo(b))||(a<b?-1:a>b?1:0);});}
 function loadWorksheets(){
   var sel=$('#wsSelect');
   // 清單＝worksheets.json 登錄檔 ∪ Firestore worksheets ∪ submissions 出現過的 worksheetId
@@ -1055,10 +1118,9 @@ function loadWorksheets(){
     var curVal=sel.value;
     sel.innerHTML='<option value="">選擇學習單…</option>';
     if(!ids.length){$('#mainNote').textContent='尚無學習單。按「新增學習單」貼上學習單網址，或編輯 worksheets.json。';return;}
-    var groups={};ids.forEach(function(id){var c=meta[id].category||'未分類';(groups[c]=groups[c]||[]).push(id);});
-    ['四上','四下','五上','五下','未分類'].forEach(function(cat){
-      var list=groups[cat];if(!list||!list.length)return;
-      list.sort();
+    var groups={};ids.forEach(function(id){var c=wsCat(id);(groups[c]=groups[c]||[]).push(id);});
+    catOrder(groups).forEach(function(cat){
+      var list=wsSortIds(groups[cat]);
       var og=document.createElement('optgroup');og.label=cat;
       list.forEach(function(id){var w=meta[id];var opt=document.createElement('option');opt.value=id;
         opt.textContent=(w.title||WS_TITLES[id]||id)+(counts[id]?'（'+counts[id]+' 份）':'');
@@ -1089,7 +1151,7 @@ function selectWs(id,w){
 }
 function wsMetaText(id){
   var n=(curWsCfg.questions||[]).length;
-  return '學習單：'+curWsCfg.title+'　·　ID：'+id+(curWsCfg.category?' · '+curWsCfg.category:'')+(curWsCfg.scoring?' · 自訂分數計算':' · 分數計算：預設')+(n?' · 開放題評分設定 '+n+' 題':'');
+  return '學習單：'+curWsCfg.title+'　·　ID：'+id+' · '+(curWsCfg.category||(autoCategory(id,curWsCfg.url,curWsCfg.title)?autoCategory(id,curWsCfg.url,curWsCfg.title)+'（自動）':'未分類'))+(curWsCfg.scoring?' · 自訂分數計算':' · 分數計算：預設')+(n?' · 開放題評分設定 '+n+' 題':'');
 }
 function loadSubs(id,forceServer){
   var rows=$('#rows');rows.innerHTML='<tr><td colspan="8"><div class="empty">載入繳交資料…</div></td></tr>';
@@ -1689,6 +1751,7 @@ $('#rosterSave').addEventListener('click',function(){
     return batch.commit();
   }).then(function(){
     note.style.color='var(--ok)';note.textContent='已儲存。';
+    refreshAfterSettings();
     setTimeout(function(){$('#rosterModal').classList.add('off');},600);
   }).catch(function(e){note.style.color='var(--warn)';note.textContent='儲存失敗：'+e.message;});
 });
@@ -2146,6 +2209,8 @@ function syncOpenCards(){
 function renderSettings(){
   $('#setTitle').value=curWsCfg.title||curWs||'';
   $('#setCat').value=curWsCfg.category||'';
+  var ac=autoCategory(curWs,curWsCfg.url,curWsCfg.title);
+  $('#setCat').querySelector('option[value=""]').textContent='自動判斷（'+(ac||'看不出來＝未分類')+'）';
   $('#setSummary').value=curWsCfg.summary||'';
   $('#wsAdminBox').innerHTML=curWsCfg.url
     ?('<a href="'+esc(curWsCfg.url)+'#admin" target="_blank" class="btn" style="text-decoration:none;display:inline-block;margin-bottom:6px">開啟學習單 Admin（設定／查看標準答案）</a>'
@@ -2912,6 +2977,8 @@ function courseLabel(cid){var c=courseById(cid);return c?(c.name||cid):cid;}
 function wsTitleOf(id){var m=(window._wsMeta||{})[id]||{};return m.title||WS_TITLES[id]||id;}
 function hhmm2min(t){var m=/^(\d{1,2}):(\d{2})$/.exec(String(t||''));return m?(+m[1])*60+(+m[2]):null;}
 function slotKey(day,period){return day+'-'+period;}
+var CN_DIGIT=['零','一','二','三','四','五','六','七','八','九','十'];
+function cnNum(n){n=Number(n);if(n>=0&&n<=10)return CN_DIGIT[n];if(n<20)return '十'+CN_DIGIT[n-10];return String(n);}
 function ttPeriods(){return (TT.periods||[]).slice().sort(function(a,b){return a.no-b.no;});}
 function slotsOfDay(day){
   return ttPeriods().map(function(p){return {period:p.no,start:p.start,end:p.end,cid:TT.slots[slotKey(day,p.no)]||''};})
@@ -2936,11 +3003,10 @@ function nextSlot(now){
 }
 function wsOptionsHtml(sel,blankLabel){
   var meta=window._wsMeta||{},groups={};
-  Object.keys(meta).forEach(function(id){var c=meta[id].category||'未分類';(groups[c]=groups[c]||[]).push(id);});
+  Object.keys(meta).forEach(function(id){var c=wsCat(id);(groups[c]=groups[c]||[]).push(id);});
   var h='<option value="">'+esc(blankLabel||'（未指定）')+'</option>';
-  ['四上','四下','五上','五下','未分類'].forEach(function(cat){
-    var list=groups[cat];if(!list||!list.length)return;
-    list.sort();
+  catOrder(groups).forEach(function(cat){
+    var list=wsSortIds(groups[cat]);
     h+='<optgroup label="'+esc(cat)+'">';
     list.forEach(function(id){h+='<option value="'+esc(id)+'"'+(id===sel?' selected':'')+'>'+esc(wsTitleOf(id))+'</option>';});
     h+='</optgroup>';
@@ -2952,6 +3018,7 @@ function renderNow(){
   if(!db||!auth||!auth.currentUser){card.hidden=true;return;}
   card.hidden=false;
   if(!Object.keys(TT.slots||{}).length){
+    $('#nowPill').className='nowPill';$('#nowPill').textContent='上課';
     $('#nowWhen').textContent='尚未匯入課表';
     $('#nowClass').textContent='—';
     $('#nowWs').textContent='按頁首「課表」貼上或用格子填一次，之後每堂課就能從這裡一鍵上課。';
@@ -2959,36 +3026,45 @@ function renderNow(){
     $('#startClassBtn').disabled=true;$('#todayRow').innerHTML='';
     return;
   }
-  var sl=nextSlot(new Date());
+  var now=new Date(),sl=nextSlot(now);
   if(!sl){
+    $('#nowPill').className='nowPill';$('#nowPill').textContent='上課';
     $('#nowWhen').textContent='課表裡找不到接下來的課（可能只排了今天已經上完的節次）';
     $('#nowClass').textContent='—';$('#nowWs').textContent='';
     $('#nowWsSel').disabled=true;$('#startClassBtn').disabled=true;
   }else{
-    var when='星期'+DAY_CN[sl.day]+' 第'+sl.period+'節　'+sl.start+'–'+sl.end;
-    if(sl.live)when+='　·　進行中';
-    else if(sl.offset===0)when+='　·　'+(sl.minsToStart<=0?'即將開始':('還有 '+sl.minsToStart+' 分鐘'));
-    else when+='　·　'+(sl.offset===1?'明天':'下一個上課日');
-    $('#nowWhen').textContent=when;
+    var when='週'+DAY_CN[sl.day]+' 第'+cnNum(sl.period)+'節 '+sl.start+'–'+sl.end,pill=$('#nowPill');
+    if(sl.live){
+      var left=Math.ceil((hhmm2min(sl.end)*60-(now.getHours()*3600+now.getMinutes()*60+now.getSeconds()))/60);
+      pill.className='nowPill live';pill.textContent='上課中';
+      when+='　<b>距離下課 '+left+' 分</b>';
+    }else if(sl.offset===0){
+      pill.className='nowPill next';pill.textContent='下一節';
+      when+='　'+(sl.minsToStart<=0?'即將開始':('還有 '+(sl.minsToStart>=60?Math.floor(sl.minsToStart/60)+' 小時 '+(sl.minsToStart%60?sl.minsToStart%60+' 分':''):sl.minsToStart+' 分鐘')+'上課'));
+    }else{
+      pill.className='nowPill';pill.textContent=sl.offset===1?'明天':'下次上課';
+    }
+    $('#nowWhen').innerHTML=when;
     $('#nowClass').textContent=courseLabel(sl.cid)+(courseById(sl.cid)?'':'（名單裡沒有這個班級）');
     var ws=(TT.currentWs||{})[sl.cid]||'';
     $('#nowWsSel').disabled=false;
     $('#nowWsSel').innerHTML=wsOptionsHtml(ws,'本週學習單…');
     $('#nowWsSel').dataset.cid=sl.cid;
     var meta=(window._wsMeta||{})[ws]||{};
+    // 學習單名稱已經顯示在下拉選單裡，這一行只在需要老師處理時才出現
     $('#nowWs').textContent=!ws
-      ?'尚未指定本週學習單——從右邊下拉選一份（選了就存進課表）。'
-      :('本週學習單：'+wsTitleOf(ws)+(meta.url?'':'（這份還沒登錄網址，開不了 Admin；可用「新增學習單」補上）'));
+      ?'這班還沒指定本週學習單——按「本週學習單」一次設定好幾班，或從右邊下拉只改這一班。'
+      :(meta.url?'':'「'+wsTitleOf(ws)+'」還沒登錄網址，按上課時開不了 Admin；可用「新增學習單」補上。');
     $('#startClassBtn').disabled=!ws;
   }
   // 今日各節：點一下就上那一節（補開、或提前開下一節都用這個）
-  var today=new Date().getDay(),list=slotsOfDay(today);
+  var today=now.getDay(),list=slotsOfDay(today),nowMin=now.getHours()*60+now.getMinutes();
   $('#todayRow').innerHTML=list.length
     ? list.map(function(x){
-        var on=sl&&sl.offset===0&&sl.period===x.period;
-        return '<button class="chip'+(on?' on':'')+'" data-day="'+today+'" data-period="'+x.period+'">第'+x.period+'節 '+esc(courseLabel(x.cid))+'</button>';
+        var on=sl&&sl.offset===0&&sl.period===x.period, past=!on&&hhmm2min(x.end)!=null&&nowMin>=hhmm2min(x.end);
+        return '<button class="chip'+(on?' on':'')+(past?' past':'')+'" data-day="'+today+'" data-period="'+x.period+'" title="'+esc(x.start+'–'+x.end)+'：點一下就上這一節">第'+cnNum(x.period)+'節 '+esc(courseLabel(x.cid))+'</button>';
       }).join('')
-    : '<span class="note" style="margin:0">今天（星期'+DAY_CN[today]+'）課表上沒有課。</span>';
+    : '<span class="note" style="margin:0">今天沒有課</span>';
 }
 $('#todayRow').addEventListener('click',function(e){
   var b=e.target.closest('.chip');if(!b)return;
@@ -3021,7 +3097,7 @@ function startClass(cid,wsId){
   }
   if(sel)sel.value=wsId;
   selectWs(wsId,meta);
-  // 即時繳交要最先開：置頂小視窗需要「剛點擊」的使用者動作，先開別的視窗可能把這個動作用掉
+  // 即時繳交要最先開：置頂視窗需要「剛點擊」的使用者動作，先開別的視窗可能把這個動作用掉
   var livePromise=openLiveWindow(cid,wsId);
   var opened=[],alreadyOpen=isWinOpen(wsAdminWindows[wsId]),want=meta.url&&!alreadyOpen?2:1;
   if(meta.url&&!alreadyOpen){
@@ -3031,7 +3107,7 @@ function startClass(cid,wsId){
     opened.push('學習單 Admin（已開著，未重開）');
   }
   livePromise.then(function(ok){
-    if(ok)opened.push(isWinOpen(live.pip)?'即時繳交（置頂小視窗）':'即時繳交');
+    if(ok)opened.push(isWinOpen(live.pip)?'即時繳交（置頂）':'即時繳交');
     if(!opened.length){
       note.textContent='視窗被瀏覽器攔住了，請允許這個網站的彈出視窗後再按一次「上課」。';
       return;
@@ -3049,17 +3125,63 @@ $('#startClassBtn').addEventListener('click',function(){
 // ---- 課表 modal ----
 function ttOpen(){
   $('#ttImportBox').hidden=true;$('#ttImportToggle').textContent='📋 貼上匯入';
-  renderTtGrid();renderTtWeek();
+  renderTtGrid();
   $('#ttNote').textContent='';$('#ttParseNote').textContent='';$('#ttParseBad').innerHTML='';
   $('#ttModal').classList.remove('off');
 }
 $('#ttBtn').addEventListener('click',ttOpen);
-$('#ttCancel').addEventListener('click',function(){$('#ttModal').classList.add('off');});
-$('#ttTabbar').addEventListener('click',function(e){
-  var b=e.target.closest('.tab-btn');if(!b)return;
-  Array.prototype.forEach.call(this.querySelectorAll('.tab-btn'),function(x){x.classList.toggle('on',x===b);});
-  Array.prototype.forEach.call(document.querySelectorAll('[data-ttpage]'),function(pg){pg.hidden=(pg.dataset.ttpage!==b.dataset.tab);});
+
+// ---- 本週學習單：先選學習單 → 勾班級（可一次勾整個年級）→ 存進課表的 currentWs ----
+function weekCourses(){return (window._courses||[]).filter(function(c){return c.grade!=null;});}
+function weekRender(){
+  var ws=$('#weekWs').value,cur=TT.currentWs||{},byG={};
+  weekCourses().forEach(function(c){(byG[c.grade]=byG[c.grade]||[]).push(c);});
+  var grades=Object.keys(byG).sort(function(a,b){return a-b;});
+  $('#weekGradeBtns').innerHTML=grades.map(function(g){
+    return '<button class="btn" type="button" data-grade="'+g+'" style="padding:4px 10px;font-size:12px" title="再按一次取消這個年級">全選'+cnNum(g)+'年級</button>';}).join('');
+  $('#weekClasses').innerHTML=grades.length?grades.map(function(g){
+    return '<div class="wkGrade"><h4>'+cnNum(g)+'年級</h4><div class="wkList">'+byG[g].map(function(c){
+      var other=cur[c.id]&&cur[c.id]!==ws?cur[c.id]:'';
+      return '<label class="wkCls" title="'+(other?'目前本週是：'+esc(wsTitleOf(other))+'；勾選會改成上面這份':'')+'"><input type="checkbox" data-cid="'+esc(c.id)+'" data-grade="'+g+'"'+(ws&&cur[c.id]===ws?' checked':'')+'>'
+        +esc(c.name||c.id)+(other?' <small>（目前另一份）</small>':'')+'</label>';
+    }).join('')+'</div></div>';
+  }).join(''):'<p class="note" style="margin:0">還沒有班級名單，請先到「設定 → 名單匯入」。</p>';
+  $('#weekNote').textContent='';
+}
+function weekOpen(){
+  var pre=$('#nowWsSel').value||curWs||'';
+  $('#weekWs').innerHTML=wsOptionsHtml(pre,'選一份學習單…');
+  weekRender();
+  $('#weekModal').classList.remove('off');
+}
+$('#weekWsBtn').addEventListener('click',weekOpen);
+$('#weekWs').addEventListener('change',weekRender);
+$('#weekCancel').addEventListener('click',function(){$('#weekModal').classList.add('off');});
+$('#weekGradeBtns').addEventListener('click',function(e){
+  var b=e.target.closest('[data-grade]');if(!b)return;
+  var boxes=document.querySelectorAll('#weekClasses input[data-grade="'+b.dataset.grade+'"]');
+  var all=Array.prototype.every.call(boxes,function(x){return x.checked;});
+  Array.prototype.forEach.call(boxes,function(x){x.checked=!all;});
 });
+$('#weekNone').addEventListener('click',function(){Array.prototype.forEach.call(document.querySelectorAll('#weekClasses input'),function(x){x.checked=false;});});
+$('#weekSave').addEventListener('click',function(){
+  var ws=$('#weekWs').value,note=$('#weekNote'),btn=this;
+  if(!ws){note.style.color='var(--warn)';note.textContent='先選一份學習單。';return;}
+  var cur=Object.assign({},TT.currentWs||{}),n=0;
+  Array.prototype.forEach.call(document.querySelectorAll('#weekClasses input'),function(x){
+    var cid=x.dataset.cid;
+    if(x.checked){cur[cid]=ws;n++;}
+    else if(cur[cid]===ws)delete cur[cid];   // 原本是這份、這次取消勾選＝不上這份了
+  });
+  TT.currentWs=cur;btn.disabled=true;note.style.color='var(--muted)';note.textContent='儲存中…';
+  ttFetch('POST',TT).then(function(r){
+    btn.disabled=false;
+    if(!r||!r.ok){note.style.color='var(--warn)';note.textContent='儲存失敗：'+((r&&r.error)||'未知錯誤');return;}
+    TT=r.timetable;renderNow();weekRender();
+    note.style.color='var(--ok)';note.textContent='已儲存：'+n+' 個班級這週上「'+wsTitleOf(ws)+'」。';
+  }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='儲存失敗：'+e.message;});
+});
+$('#ttCancel').addEventListener('click',function(){$('#ttModal').classList.add('off');});
 $('#ttImportToggle').addEventListener('click',function(){
   var box=$('#ttImportBox'),show=box.hidden;
   box.hidden=!show;
@@ -3143,17 +3265,6 @@ $('#ttAddPeriod').addEventListener('click',function(){
   tr.innerHTML=cells;
   tb.appendChild(tr);
 });
-function renderTtWeek(){
-  var cids=[];
-  Object.keys(TT.slots||{}).forEach(function(k){var c=TT.slots[k];if(c&&cids.indexOf(c)<0)cids.push(c);});
-  cids.sort();
-  if(!cids.length){$('#ttWeek').innerHTML='<p class="note" style="margin:0">課表格子還是空的，先填課表再回來指定學習單。</p>';return;}
-  $('#ttWeek').innerHTML='<table class="ttTable"><thead><tr><th style="width:170px">班級</th><th>本週學習單</th></tr></thead><tbody>'
-    +cids.map(function(cid){
-      return '<tr><th style="text-align:left">'+esc(courseLabel(cid))+'</th>'
-        +'<td><select class="tt-week" data-cid="'+esc(cid)+'">'+wsOptionsHtml((TT.currentWs||{})[cid]||'')+'</select></td></tr>';
-    }).join('')+'</tbody></table>';
-}
 // ---- 貼上匯入：一行一節課，順序不拘；對不上的集中列成例外，不靜靜吞掉 ----
 function ttNorm(t){return halfWidth(t).replace(/[，、,\/|]+/g,' ').replace(/\s+/g,' ').trim();}
 function padHM(t){return t.length===4?('0'+t):t;}
@@ -3244,7 +3355,7 @@ $('#ttParse').addEventListener('click',function(){
   });
   TT.slots=slots;
   added.sort(function(a,b){return a-b;});timed.sort(function(a,b){return a-b;});
-  renderTtGrid();renderTtWeek();
+  renderTtGrid();
   $('#ttParseNote').style.color=ok?'var(--ok)':'var(--warn)';
   $('#ttParseNote').textContent='解析成功 '+ok+' 筆'+(bad.length?('，'+bad.length+' 行對不上（列在下面，可改字再解析一次，或直接在下面格子手動選）'):'')+'。'
     +(timed.length?('第'+timed.join('、')+'節已依貼上的內容填好上下課時間。'):'')
@@ -3271,19 +3382,14 @@ $('#ttSave').addEventListener('click',function(){
   if(bad.length){note.style.color='var(--warn)';note.textContent='節次時間格式不對（要 HH:MM 24 小時制，下課要晚於上課）：'+bad.join('、');return;}
   if(dupe.length){note.style.color='var(--warn)';note.textContent='節次編號重複：第'+dupe.join('、')+'節，請先改成不同編號（同編號會互相蓋掉班級選擇）。';return;}
   if(!periods.length){note.style.color='var(--warn)';note.textContent='至少要留一節（按「＋新增節次」加一列）。';return;}
-  var currentWs={};
-  Array.prototype.forEach.call(document.querySelectorAll('.tt-week'),function(sel){if(sel.value)currentWs[sel.dataset.cid]=sel.value;});
-  // 沒出現在「本週學習單」表格裡的班級（例如剛剛才從格子移除），原本存過的指定保留，不被空白覆蓋
-  Object.keys(TT.currentWs||{}).forEach(function(cid){
-    if(!(cid in currentWs)&&!document.querySelector('.tt-week[data-cid="'+cid+'"]'))currentWs[cid]=TT.currentWs[cid];
-  });
+  var currentWs=Object.assign({},TT.currentWs||{});   // 本週學習單由「本週學習單」按鈕管理，存課表時原樣保留
   btn.disabled=true;note.style.color='var(--muted)';note.textContent='儲存中…';
   ttFetch('POST',{periods:periods,slots:collectTtSlots(),currentWs:currentWs}).then(function(r){
     btn.disabled=false;
     if(!r||!r.ok){note.style.color='var(--warn)';note.textContent='儲存失敗：'+((r&&r.error)||'未知錯誤');return;}
     TT=r.timetable;note.style.color='var(--ok)';
     note.textContent='已儲存（'+Object.keys(TT.slots).length+' 節課、'+TT.periods.length+' 個節次時間）。';
-    renderTtGrid();renderTtWeek();renderNow();
+    renderTtGrid();refreshAfterSettings();
   }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='儲存失敗：'+e.message;});
 });
 

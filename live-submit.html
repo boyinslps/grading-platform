@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="author" content="資訊老師黃博胤">
 <title>即時繳交</title>
 <script>
 // 深色模式跟主畫面同一個偏好（同網域共用 localStorage 的 wk_theme），沒選過就跟系統
@@ -10,64 +11,79 @@
 </script>
 <style>
   :root{--bg:#F6F7F9;--surface:#FFFFFF;--ink:#1E2430;--muted:#6B7280;--line:#E5E7EB;--line2:#D1D5DB;
-    --go:#16A34A;--go-ink:#15803D;--go-soft:#DCFCE7;--danger:#B91C1C}
-  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12141a;--surface:#1B1E27;--ink:#E7E9EE;--muted:#98A0B3;--line:#2B2F3B;--line2:#3A3F4E;--go:#22C55E;--go-ink:#4ADE80;--go-soft:#12301F;--danger:#F87171}}
-  :root[data-theme="dark"]{--bg:#12141a;--surface:#1B1E27;--ink:#E7E9EE;--muted:#98A0B3;--line:#2B2F3B;--line2:#3A3F4E;--go:#22C55E;--go-ink:#4ADE80;--go-soft:#12301F;--danger:#F87171}
+    --done:#F97316;--done-edge:#EA580C;--done-ink:#C2410C;--danger:#B91C1C}
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12141a;--surface:#1B1E27;--ink:#E7E9EE;--muted:#98A0B3;--line:#2B2F3B;--line2:#3A3F4E;--done-ink:#FB923C;--danger:#F87171}}
+  :root[data-theme="dark"]{--bg:#12141a;--surface:#1B1E27;--ink:#E7E9EE;--muted:#98A0B3;--line:#2B2F3B;--line2:#3A3F4E;--done-ink:#FB923C;--danger:#F87171}
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:'Inter','Noto Sans TC',system-ui,-apple-system,sans-serif}
   body{display:flex;flex-direction:column;overflow:hidden}
 
-  header{display:flex;align-items:center;gap:12px;padding:12px 16px 10px}
+  header{display:flex;align-items:center;gap:14px;padding:14px 20px 10px}
   .ttl{flex:1;min-width:0}
-  .ttl h1{margin:0;font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ttl .ws{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-  .count{display:flex;align-items:baseline;gap:4px;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .count b{font-size:30px;font-weight:800;line-height:1;color:var(--go-ink)}
-  .count span{font-size:15px;color:var(--muted);font-weight:600}
-  .count.done b{color:var(--go)}
-  .doneTag{display:none;font-size:12px;font-weight:700;color:#fff;background:var(--go);border-radius:999px;padding:3px 10px;white-space:nowrap}
+  .ttlRow{display:flex;align-items:center;gap:10px;min-width:0}
+  .ttl h1{margin:0;font-size:22px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ttl .ws{font-size:13.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  /* 距離下課：照課表的節次時間倒數，最後 5 分鐘變色 */
+  .bell{flex:none;font-size:13px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--line);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bell.soon{background:var(--done);color:#fff}
+  .count{display:flex;align-items:baseline;gap:5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .count b{font-size:38px;font-weight:800;line-height:1;color:var(--done-ink)}
+  .count span{font-size:17px;color:var(--muted);font-weight:600}
+  .doneTag{display:none;font-size:13px;font-weight:700;color:#fff;background:var(--done);border-radius:999px;padding:4px 12px;white-space:nowrap}
   .count.done + .doneTag{display:inline-block}
-  .bar{height:5px;background:var(--line);margin:0 16px;border-radius:99px;overflow:hidden}
-  .bar i{display:block;height:100%;width:0;background:var(--go);border-radius:99px;transition:width .5s cubic-bezier(.2,.8,.2,1)}
+  .bar{height:6px;background:var(--line);margin:0 20px;border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--done);border-radius:99px;transition:width .5s cubic-bezier(.2,.8,.2,1)}
 
-  /* 座號圓圈：大小由 fit() 依視窗尺寸與人數算出（--d），所有座號一定一次塞得下、不用捲動 */
-  #grid{flex:1;min-height:0;display:grid;justify-content:center;align-content:center;gap:var(--gap,10px);padding:14px 16px}
-  .seat{width:var(--d,64px);height:var(--d,64px);border-radius:50%;display:grid;place-items:center;
+  /* 座號：圓角方形，大小由 fit() 依視窗尺寸與人數算出（--d），所有座號一定一次塞得下、不用捲動 */
+  #grid{flex:1;min-height:0;display:grid;justify-content:center;align-content:center;gap:var(--gap,10px);padding:16px 20px}
+  .seat{width:var(--d,64px);height:var(--d,64px);border-radius:calc(var(--d,64px)*.2);display:grid;place-items:center;
     border:2px solid var(--line2);background:var(--surface);color:var(--ink);
-    font-weight:800;font-size:calc(var(--d,64px)*.42);font-variant-numeric:tabular-nums;line-height:1;
+    font-weight:800;font-size:calc(var(--d,64px)*.44);font-variant-numeric:tabular-nums;line-height:1;
     cursor:pointer;user-select:none;position:relative;transition:background .25s,border-color .25s,color .25s,transform .12s}
-  .seat:hover{transform:scale(1.05)}
-  .seat.on{background:var(--go);border-color:var(--go);color:#fff}
+  .seat:hover{transform:scale(1.04)}
+  .seat.on{background:var(--done);border-color:var(--done-edge);color:#fff}
   .seat.abs{background:transparent;border-style:dashed;color:var(--muted);opacity:.65}
-  .seat.abs::after{content:'假';position:absolute;bottom:8%;font-size:calc(var(--d,64px)*.17);font-weight:700}
-  /* 剛交進來：彈一下＋往外擴散的綠圈，教室裡一眼看得到誰剛交 */
+  .seat.abs::after{content:'假';position:absolute;bottom:7%;font-size:calc(var(--d,64px)*.17);font-weight:700}
+  /* 剛交進來：彈一下＋往外擴散的橘框，教室裡一眼看得到誰剛交 */
   .seat.fresh{animation:pop .45s cubic-bezier(.2,1.6,.4,1)}
-  .seat.fresh::before{content:'';position:absolute;inset:-2px;border-radius:50%;border:3px solid var(--go);animation:ring 1.4s ease-out forwards}
+  .seat.fresh::before{content:'';position:absolute;inset:-2px;border-radius:inherit;border:3px solid var(--done);animation:ring 1.4s ease-out forwards}
   @keyframes pop{0%{transform:scale(.7)}100%{transform:scale(1)}}
-  @keyframes ring{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.7)}}
+  @keyframes ring{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.5)}}
 
-  footer{display:flex;align-items:center;gap:10px;padding:8px 16px 12px;font-size:12.5px;color:var(--muted);min-height:20px}
+  footer{display:flex;align-items:center;gap:12px;padding:8px 20px 12px;font-size:13.5px;color:var(--muted);min-height:20px}
   footer .miss{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   footer .miss b{color:var(--ink);font-weight:700}
-  .lnk{border:0;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:5px;white-space:nowrap}
+  .lnk{border:0;background:none;color:var(--muted);font:inherit;font-size:12.5px;cursor:pointer;padding:3px 6px;border-radius:5px;white-space:nowrap}
   .lnk:hover{color:var(--ink);background:var(--line)}
   .lnk.danger:hover{color:var(--danger)}
-  .note{margin:auto;padding:22px;color:var(--muted);font-size:14px;text-align:center;max-width:360px;line-height:1.6}
-  #toast{position:fixed;left:50%;bottom:44px;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:13px;padding:7px 14px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s}
+  .lnk.go{color:#fff;background:var(--danger);font-weight:700}
+  .lnk.go:hover{color:#fff;background:var(--danger);opacity:.9}
+  #clearBox{white-space:nowrap}
+  .sign{font-size:11px;opacity:.6;white-space:nowrap}
+  .note{margin:auto;padding:22px;color:var(--muted);font-size:15px;text-align:center;max-width:420px;line-height:1.6}
+  #toast{position:fixed;left:50%;bottom:48px;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:14px;padding:8px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s}
   #toast.show{opacity:.92}
 
-  /* 置頂小視窗（pip=1）：字和留白都縮一點，把空間讓給座號 */
-  body.pip header{padding:9px 12px 7px}
-  body.pip .ttl h1{font-size:15px}
-  body.pip .count b{font-size:24px}
-  body.pip .bar{margin:0 12px}
-  body.pip #grid{padding:10px 12px}
-  body.pip footer{padding:6px 12px 9px}
+  /* 視窗被縮小時（例如縮在角落）：字和留白跟著縮，把空間讓給座號 */
+  @media (max-width:560px),(max-height:440px){
+    header{padding:9px 12px 7px;gap:10px}
+    .ttl h1{font-size:16px}
+    .ttl .ws{font-size:12px}
+    .bell{font-size:11.5px;padding:2px 8px}
+    .count b{font-size:26px}.count span{font-size:14px}
+    .bar{margin:0 12px;height:5px}
+    #grid{padding:10px 12px}
+    footer{padding:6px 12px 9px;font-size:12px}
+    .sign{display:none}
+  }
 </style>
 </head>
 <body>
 <header>
-  <div class="ttl"><h1 id="title">即時繳交</h1><div class="ws" id="wsName">載入中…</div></div>
+  <div class="ttl">
+    <div class="ttlRow"><h1 id="title">即時繳交</h1><span class="bell" id="bell" hidden></span></div>
+    <div class="ws" id="wsName">載入中…</div>
+  </div>
   <div class="count" id="count"><b id="got">–</b><span id="total"></span></div>
   <span class="doneTag">全部交齊</span>
 </header>
@@ -75,16 +91,14 @@
 <div id="grid"></div>
 <footer>
   <div class="miss" id="miss"></div>
-  <button class="lnk" id="bigBtn" hidden title="開一個一般視窗，可以拖到投影幕放大">投影用大視窗</button>
-  <button class="lnk" id="pinBtn" hidden title="改成浮在所有視窗最上層的小視窗">釘選在最上層</button>
-  <button class="lnk danger" id="clearBtn" hidden title="刪除這個班級這份學習單的所有繳交，讓全班重交">清除繳交紀錄</button>
+  <span id="clearBox"><button class="lnk danger" id="clearBtn" title="刪除這個班級這份學習單的所有繳交，讓全班重交">清除繳交紀錄</button></span>
+  <span class="sign">made by 資訊老師黃博胤</span>
 </footer>
 <div id="toast"></div>
 
 <script>
 var params=new URLSearchParams(location.search);
 var cid=params.get('cid'), ws=params.get('ws');
-var PIP=params.get('pip')==='1';
 var firebaseConfig={
   apiKey:"AIzaSyAaodBvsP-BSovON14izt22DOXeH40TTGM",
   authDomain:"pcclass-94300.firebaseapp.com",
@@ -96,17 +110,10 @@ var firebaseConfig={
 function $(s){return document.querySelector(s)}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
 function loadScript(src){return new Promise(function(res,rej){var s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
-function toast(msg){var t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(function(){t.classList.remove('show');},2200);}
+function toast(msg){var t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(function(){t.classList.remove('show');},2400);}
 function showNote(msg){$('#grid').innerHTML='<div class="note">'+esc(msg)+'</div>';}
 
-if(PIP)document.body.classList.add('pip');
-else{
-  $('#clearBtn').hidden=false;   // 置頂小視窗裡不放刪除鈕：視窗小、又常在上課中點座號，誤觸代價太高
-  if('documentPictureInPicture' in window)$('#pinBtn').hidden=false;
-}
-if(PIP)$('#bigBtn').hidden=false;
-
-// 把目前的已交人數告訴開這個視窗的主畫面（綠色圓鈕上的數字）；置頂小視窗時上一層是 PiP 視窗，彈出視窗時是 opener
+// 把目前的已交人數告訴主畫面（綠色圓鈕上的數字）；置頂視窗時上一層是 PiP 視窗，一般彈出視窗時是 opener
 function notify(msg){
   msg.cid=cid;msg.ws=ws;
   [window.parent!==window?window.parent:null,window.opener].forEach(function(t){
@@ -114,7 +121,24 @@ function notify(msg){
   });
 }
 
-// ---- 座號自動排版：試每一種欄數，挑能讓圓圈最大、又全部塞得下的那一種 ----
+// ---- 距離下課：讀這台電腦的課表節次時間（評分平台 /api/timetable），每秒倒數 ----
+var periods=[];
+function hm(t){var m=/^(\d{1,2}):(\d{2})$/.exec(String(t||''));return m?(+m[1])*3600+(+m[2])*60:null;}
+function tickBell(){
+  var el=$('#bell'),now=new Date(),s=now.getHours()*3600+now.getMinutes()*60+now.getSeconds(),end=null;
+  periods.forEach(function(p){var st=hm(p.start),en=hm(p.end);if(st!=null&&en!=null&&s>=st&&s<en)end=en;});
+  if(end==null){el.hidden=true;return;}   // 下課時間或沒有課表：不顯示
+  var left=end-s;
+  el.hidden=false;
+  el.textContent='距離下課 '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0');
+  el.classList.toggle('soon',left<=300);
+}
+fetch('/api/timetable').then(function(r){return r.json();}).then(function(r){
+  if(r&&r.ok&&r.timetable)periods=r.timetable.periods||[];
+  tickBell();setInterval(tickBell,1000);
+}).catch(function(){});
+
+// ---- 座號自動排版：試每一種欄數，挑能讓方塊最大、又全部塞得下的那一種 ----
 var seatCount=0;
 function fit(){
   var g=$('#grid');if(!seatCount)return;
@@ -122,46 +146,19 @@ function fit(){
   var W=g.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
   var H=g.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
   if(W<=0||H<=0)return;
-  var best={d:0,cols:1};
+  var best={d:0,cols:1,gap:8};
   for(var cols=1;cols<=seatCount;cols++){
     var rows=Math.ceil(seatCount/cols);
-    var gap=Math.max(4,Math.min(14,Math.min(W/cols,H/rows)*.14));
+    var gap=Math.max(4,Math.min(16,Math.min(W/cols,H/rows)*.13));
     var d=Math.min((W-(cols-1)*gap)/cols,(H-(rows-1)*gap)/rows);
     if(d>best.d)best={d:d,cols:cols,gap:gap};
   }
-  var d=Math.max(22,Math.min(Math.floor(best.d),150));
+  var d=Math.max(22,Math.min(Math.floor(best.d),170));
   g.style.setProperty('--d',d+'px');
   g.style.setProperty('--gap',Math.round(best.gap)+'px');
   g.style.gridTemplateColumns='repeat('+best.cols+','+d+'px)';
 }
 if(window.ResizeObserver)new ResizeObserver(fit).observe($('#grid'));else window.addEventListener('resize',fit);
-
-// ---- 釘選在最上層（一般彈出視窗才有）：開一個 Document Picture-in-Picture 小視窗，裡面放置頂版的自己 ----
-// 小視窗開著的時候，這個大視窗就停止監聽，免得同一份資料讀兩次；小視窗關掉再接回來。
-var pipWin=null;
-function togglePin(){
-  if(pipWin){pipWin.close();return;}
-  documentPictureInPicture.requestWindow({width:460,height:400}).then(function(w){
-    pipWin=w;
-    w.document.body.style.cssText='margin:0;height:100vh;overflow:hidden';
-    var f=w.document.createElement('iframe');
-    f.src=location.pathname+'?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(ws)+'&pip=1';
-    f.style.cssText='border:0;width:100%;height:100%;display:block';
-    w.document.body.appendChild(f);
-    $('#pinBtn').textContent='取消釘選';
-    if(window._pause)window._pause();
-    w.addEventListener('pagehide',function(){pipWin=null;$('#pinBtn').textContent='釘選在最上層';if(window._resume)window._resume();});
-  }).catch(function(e){toast('開啟失敗：'+e.message);});
-}
-$('#pinBtn').addEventListener('click',togglePin);
-
-// 置頂小視窗 → 投影用大視窗：從這個 iframe 自己開（點擊的使用者動作在這裡），開好後把小視窗收掉
-$('#bigBtn').addEventListener('click',function(){
-  var url=location.pathname+'?cid='+encodeURIComponent(cid)+'&ws='+encodeURIComponent(ws);
-  var w=window.open(url,'liveSub_'+cid+'_'+ws,'width=900,height=640,menubar=no,toolbar=no,location=no,status=no');
-  if(!w){toast('大視窗被瀏覽器攔住了，請允許這個網站的彈出視窗');return;}
-  try{window.parent.close();}catch(e){}
-});
 
 if(!cid||!ws){
   showNote('網址缺少班級或學習單參數，請從評分平台主畫面右下角的綠色圓鈕開啟。');
@@ -183,14 +180,13 @@ if(!cid||!ws){
 }
 
 function boot(db){
-  var course=null, roster=[], absentMap={}, curGot={}, absRef=null, unsub=null, firstSnap=true;
+  var course=null, roster=[], absentMap={}, curGot={}, absRef=null, firstSnap=true;
   var cref=db.collection('courses').doc(cid);
   Promise.all([cref.get(), db.collection('worksheets').doc(ws).get().catch(function(){return null;})]).then(function(r){
     var d=r[0];
     course=d.exists?Object.assign({id:d.id},d.data()):null;
-    var wsTitle=(r[1]&&r[1].exists&&r[1].data().title)||ws;
     $('#title').textContent=course?course.name:cid;
-    $('#wsName').textContent=wsTitle;
+    $('#wsName').textContent=(r[1]&&r[1].exists&&r[1].data().title)||ws;
     absRef=cref.collection('absences').doc(ws);
     return Promise.all([cref.collection('students').get(), absRef.get()]);
   }).then(function(r){
@@ -198,25 +194,18 @@ function boot(db){
     roster.sort(function(a,b){return a.seatNo-b.seatNo});
     absentMap=(r[1].exists?r[1].data():{})||{};
     render({});
-    listen();
-  }).catch(function(e){showNote('讀取名單失敗：'+e.message);});
-
-  // 只監聽這個班級（學習單＋年級＋班級三個等式條件，不需要複合索引）：別班繳交不會觸發讀取
-  function listen(){
-    if(unsub)return;
+    // 只監聽這個班級（學習單＋年級＋班級三個等式條件，不需要複合索引）：別班繳交不會觸發讀取
     var q=db.collection('submissions').where('worksheetId','==',ws);
     if(course&&course.grade!=null&&course.className!=null)q=q.where('grade','==',course.grade).where('className','==',course.className);
-    firstSnap=true;
-    unsub=q.onSnapshot(function(qs){
+    q.onSnapshot(function(qs){
       var got={};qs.forEach(function(d){var s=d.data();
         if(course&&s.grade===course.grade&&s.className===course.className&&s.studentId!=null)got[Number(s.studentId)]=true;});
-      var fresh=firstSnap?{}:Object.keys(got).filter(function(k){return !curGot[k];}).reduce(function(o,k){o[k]=true;return o;},{});
+      var fresh={};
+      if(!firstSnap)Object.keys(got).forEach(function(k){if(!curGot[k])fresh[k]=true;});
       firstSnap=false;
       render(got,fresh);
     },function(e){showNote('讀取失敗：'+e.message);});
-  }
-  window._pause=function(){if(unsub){unsub();unsub=null;}showNote('已改用最上層的小視窗顯示；關掉小視窗就會回到這裡。');};
-  window._resume=function(){listen();};
+  }).catch(function(e){showNote('讀取名單失敗：'+e.message);});
 
   // 座號、人數上限一律照班級名單走（名單有跳號就跳號，不硬湊連續號碼）
   function render(gotMap,fresh){
@@ -238,7 +227,7 @@ function boot(db){
       var tip=r.seatNo+' 號'+(r.name?' '+r.name:'')+(on?'：已交':(abs?'：請假（點一下取消）':'：還沒交（點一下標記請假）'));
       return '<div class="seat'+(on?' on':(abs?' abs':''))+(fresh[r.seatNo]?' fresh':'')+'" data-seat="'+r.seatNo+'" title="'+esc(tip)+'">'+r.seatNo+'</div>';
     }).join('');
-    // 底下列出還沒交的座號（只列號碼不列姓名：這個視窗常被投到教室前面）
+    // 底下列出還沒交的座號（只列號碼不列姓名：這個視窗會投到教室前面）
     var miss=roster.filter(function(r){return !gotMap[r.seatNo]&&!absentMap[r.seatNo];}).map(function(r){return r.seatNo;});
     $('#miss').innerHTML=done?'全班都交了':(miss.length?'還沒交：<b>'+miss.join('、')+'</b>':'');
     $('#miss').title=miss.length?'還沒交：'+miss.join('、'):'';
@@ -261,13 +250,26 @@ function boot(db){
   // 燈會馬上跟著熄滅（onSnapshot 監聽同一批資料）；同一份資料也是老師端評分列表的來源，
   // 所以這裡刪掉之後，教師評分平台看這份學習單、這個班級也會變成「尚無繳交」——
   // 是拿來讓同一班「重新交一次」用的，不是只重置畫面顯示。
-  $('#clearBtn').addEventListener('click',function(){
-    var got=Object.keys(curGot).length;
-    if(!got){toast('目前沒有任何已繳交的紀錄可以清除');return;}
-    var label=(course?course.name:cid)+' · '+$('#wsName').textContent;
-    if(!confirm('確定要清除「'+label+'」目前 '+got+' 筆已繳交的紀錄嗎？\n\n這會刪除學生的作答與評分資料，無法復原，教師評分平台裡也會一併消失。'))return;
-    if(!confirm('再次確認：真的要刪除嗎？這個動作沒有辦法復原。'))return;
-    var btn=this;btn.disabled=true;btn.textContent='清除中…';
+  // 確認改成在頁面上按兩次（不用 confirm()）：置頂視窗（Picture-in-Picture）裡不一定能跳瀏覽器對話框。
+  var clearStep=0, clearTimer=null;
+  function clearReset(){clearStep=0;clearTimeout(clearTimer);
+    $('#clearBox').innerHTML='<button class="lnk danger" id="clearBtn" title="刪除這個班級這份學習單的所有繳交，讓全班重交">清除繳交紀錄</button>';}
+  $('#clearBox').addEventListener('click',function(e){
+    var b=e.target.closest('button');if(!b)return;
+    if(b.dataset.a==='no'){clearReset();return;}
+    var n=Object.keys(curGot).length;
+    if(!n){toast('目前沒有任何已繳交的紀錄可以清除');clearReset();return;}
+    clearStep++;clearTimeout(clearTimer);clearTimer=setTimeout(clearReset,8000);   // 8 秒沒按完就自動取消
+    if(clearStep===1){
+      $('#clearBox').innerHTML='刪除 '+n+' 筆繳交、教師端也會消失？ <button class="lnk" data-a="no">取消</button><button class="lnk go" data-a="yes">確定刪除</button>';
+      return;
+    }
+    if(clearStep===2){
+      $('#clearBox').innerHTML='無法復原，真的要刪？ <button class="lnk" data-a="no">取消</button><button class="lnk go" data-a="yes">真的刪除</button>';
+      return;
+    }
+    clearTimeout(clearTimer);
+    $('#clearBox').textContent='清除中…';
     var cq=db.collection('submissions').where('worksheetId','==',ws);
     if(course&&course.grade!=null&&course.className!=null)cq=cq.where('grade','==',course.grade).where('className','==',course.className);
     cq.get().then(function(qs){
@@ -283,12 +285,11 @@ function boot(db){
       if(absRef)batches.push(absRef.delete().catch(function(){}));
       return Promise.all(batches).then(function(){return refs.length;});
     }).then(function(n){
-      absentMap={};
-      btn.disabled=false;btn.textContent='清除繳交紀錄';
+      absentMap={};clearReset();
       toast('已清除 '+n+' 筆繳交紀錄');
     }).catch(function(e){
-      btn.disabled=false;btn.textContent='清除繳交紀錄';
-      alert('清除失敗：'+e.message);
+      clearReset();
+      toast('清除失敗：'+e.message);
     });
   });
 }
