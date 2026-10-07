@@ -64,6 +64,7 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 | GET `/api/classroom/students` | 列某 Classroom 課程名單（需 `classroom.rosters.readonly` scope） |
 | POST `/api/classroom/coursework` | **依標題確保作業存在**：先找同名作業，找不到才建立（PUBLISHED、全班指派、附學習單連結）→ 回 {id, created} |
 | POST `/api/classroom/announce` | 在 Classroom 課程訊息串發公告 {courseId, text}（繳交紀錄的缺交名單；需 `classroom.announcements` 權限）|
+| POST `/api/classroom/doc-texts` | **讀學生作業附的 Google 文件**：收 {courseId, courseWorkId} → 列 studentSubmissions，把每個 driveFile 附件（只限 Google 文件）用 Drive API 匯出成純文字（單份上限 2 萬字，6 個平行）→ 回 {submissions:[{userId, state, late, docs:[{id,title,link,text｜error}]}]}。需 `drive.readonly` scope（2026-10-07 加，舊授權回 `needReauth`）。見 §7-p |
 | POST `/api/classroom/grades` | 回寫分數到指定 courseWork（patch draft+assigned 後 `:return`）；讀不到 studentSubmissions 時等 2 秒重讀一次（剛建立的作業有生成延遲） |
 | GET `/api/diagnostics` | AI／Google 連線狀態快覽 |
 | GET `/api/timetable` | 讀課表（節次時間、星期×節次→班級、每班本週學習單）；沒有檔案時回一份預設節次時間 |
@@ -106,6 +107,8 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 - **學習單設定面板改版**：原本逐題手填「標準答案」的表格已移除——**標準答案統一在學習單自己的 `#admin` 設定**，這裡只留一顆「開啟學習單 Admin」連結；面板改放**分數計算**（見 §7-d）與**評分規準**（AI 開放題用，不變）。
 
 ### 7-d. 分數計算（學習單設定，教師指定）
+> **2026-10-06 教師定案：體驗題（`experience`）一律不計分。** `calcScore()` 的扣分池只放 `score` 題；體驗題寫不寫都不扣分、不加分（加分題標記的體驗題例外，仍是答對才加），只算進完成度。整份只有體驗題時給滿總分。逐題配分格把體驗題灰掉、標「體驗·不計分」，不參與配分合計與「依題數自動配分」。與《學習單資料與提交規範》題型表「體驗題：不正式計分」一致。
+
 > 動機：教師要能自訂「答錯扣多少」「開放題佔多少比重」「個別題目能不能配不同分數」，不是寫死的公式。
 
 - **資料**：`worksheets/{ws}.scoring = { base, deduction, openWeight, itemPoints }`——`base` 總分（預設 100）、`deduction` 每題預設扣分（預設 1）、`openWeight` 開放題（AI）保留分數（預設 10，**只在這份學習單有開放題時才生效**）、`itemPoints` 逐題扣分覆寫（`{qid: 分數}`，留空的題目用 `deduction`）。未設定過就等同全預設值。
@@ -261,6 +264,14 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
   - 欄位：`manual:true`、作答欄位皆空、`status:'submitted'`；視窗內可填「統一分數」，有填就直接 `totalScore`＋`status:'graded'`＋`manualScore:true`。
   - 補登紀錄列表顯示「補登」標籤；批改抽屜可輸入分數，儲存時補上 `manualScore:true`。**`manualScore` 的紀錄批次評分不重算**（老師給的分數不被蓋掉）；沒給分的補登紀錄，批次評分會依規則算成「沒寫」的最低分。
   - `currentQtypes()` 忽略補登紀錄，避免空紀錄稀釋題號判斷。即時繳交畫面也會把補登的學生算成已交。不需要改 `firestore.rules`（老師本來就能寫 submissions）。
+
+### 7-p. 匯入 Classroom 文件：學生的 Google 文件直接當開放題答案（2026-10-07 教師指定，四上 L04 首例）
+- **動機**：學生在 Google 文件裡完成作品（例：四上 L04「我的景點清單」），原本要再「複製貼回學習單」才能評分，四年級操作慢、又是重複勞動。改成老師直接從 Classroom 讀文件。
+- **前提**：學生要在 Classroom 作業裡按「＋新增或建立 → 文件」建立（或把文件附到作業），老師帳號才有權限讀；授權要有 `drive.readonly`（Google 會顯示「未經驗證的應用程式」，因為是老師自己的 OAuth client，按繼續即可）。
+- **流程**（教師端工具列「匯入 Classroom 文件」）：選 Classroom 課程（預設 `courses/{班}.classroomCourseId`，沒有就用課程名稱裡的年班碼猜）→ 選作業（先找「第X週」開頭，再找同名）→ 選要寫進哪一題開放題（下拉列出主要開放題＋評分設定裡的題號，也可自己輸入）→「讀取學生文件」→ 表格列出每位學生的文件、字數、讀不到的原因（不是 Google 文件／權限不足）→ 座號自動對應（名單的 `classroomUserId` → Classroom 姓名「年班 座號 姓名」解析 → 名單姓名），對不到的手動填 → 「寫入繳交」。
+- **寫入**：`submissions/{學習單}__{年}-{班}-{座號}` 以 merge 寫入 `answers/openAnswers[qid]`＝文件全文、`qtypes[qid]='open'`、`qtexts[qid]`（有題幹時）、`docSource[qid]={courseWorkId, classroomUserId, files:[{fileId,title,link}]}`、`docImportedAt`。該生原本沒有繳交紀錄時，另外補 `status:'submitted'`、`submittedAt`、空的 `scoreAnswers/experienceAnswers`、`importedFrom:'classroom-doc'`（**不標 `manual`**，它是學生真正的作品）。已有答案會被覆蓋，表格會先標「會覆蓋」。
+- **之後**：照常按「批次評分」，AI 依該題的評分設定評文件內容。重新匯入＝用最新的文件內容覆蓋。
+- **學習單端配合**：題目改成「寫在文件、交在 Classroom」，學習單繳交只送其他題（例：L04 只送加分題 q3），不要再放「貼回來」的大框；`grading-spec` 仍寫該題（q2）的評分設定，題幹註明「老師從 Classroom 作業讀取文件內容」。
 
 ### 7-i. 課表與一鍵「上課」（2026-09-17 教師指定）
 > 動機：上課前的固定動作是「想一下這節是哪一班 → 找到那班這週的學習單 → 開它的 `#admin` → 再開即時繳交視窗」。這四步每節都重複一次，課表既然是固定的，就讓它自己算出來。

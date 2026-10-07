@@ -273,6 +273,7 @@
           <button class="btn" id="newWs" disabled>新增學習單</button>
           <button class="btn" id="editRoster" disabled>編輯名單</button>
           <button class="btn" id="addManual" disabled title="學生忘記交時，老師在後台幫他補一筆成績條目">補登學生</button>
+          <button class="btn" id="importDocs" disabled title="把學生在 Classroom 作業裡寫的 Google 文件讀進來，當成開放題答案再交給 AI 評分">匯入 Classroom 文件</button>
           <button class="btn" id="liveSubBtn" title="這個班每份學習單的缺交座號；即時繳交請按右下角綠色圓鈕">繳交紀錄</button>
           <button class="btn" id="wsSettings" disabled>學習單設定</button>
           <button class="btn" id="refreshSubs" disabled title="重新向資料庫抓一次目前這份學習單的繳交資料">🔄 重新整理</button>
@@ -682,6 +683,30 @@
       <button class="btn btn-primary" id="ccGo" disabled>回寫成績</button>
     </div>
     <div class="note" id="ccNote"></div>
+  </div>
+</div>
+
+<!-- 匯入 Classroom 文件（學生在作業裡建立的 Google 文件 → 開放題答案） -->
+<div class="gate off" id="docModal">
+  <div class="panel" style="width:min(780px,100%);max-height:90vh;overflow:auto">
+    <h2 id="dcTitle">匯入 Classroom 文件</h2>
+    <p>學生在 Classroom 作業裡用「<b>＋新增或建立 → 文件</b>」寫的 Google 文件，可以直接讀進來，當成這份學習單某一題開放題的答案；匯入後按「批次評分」就會交給 AI 評。學生以 Classroom 帳號（或名單上的姓名）自動對應座號。</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:200px"><label>Classroom 課程</label><select id="dcCourse"><option>載入中…</option></select></div>
+      <div class="field" style="flex:1;min-width:200px"><label>作業</label><select id="dcWork"><option value="">先選課程</option></select></div>
+      <div class="field" style="flex:1;min-width:160px"><label>寫進哪一題（開放題）</label><select id="dcQid"></select></div>
+    </div>
+    <div class="note" id="dcWorkNote" style="margin-top:-4px"></div>
+    <div style="display:flex;justify-content:flex-end;margin:6px 0 10px"><button class="btn btn-primary" id="dcLoad" disabled>讀取學生文件</button></div>
+    <div id="dcWrap" style="display:none">
+      <div class="note" id="dcMapNote"></div>
+      <div id="dcMap" style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn" id="dcCancel">關閉</button>
+      <button class="btn btn-primary" id="dcGo" disabled>寫入繳交</button>
+    </div>
+    <div class="note" id="dcNote"></div>
   </div>
 </div>
 
@@ -1141,7 +1166,7 @@ function fetchWsTitle(id,url,el){
 function selectWs(id,w){
   curWs=id; curWsCfg={title:(w&&w.title)||id,category:(w&&w.category)||'',url:(w&&w.url)||'',summary:(w&&w.summary)||'',answerKey:(w&&w.answerKey)||null,rubric:(w&&w.rubric)||null,questions:(w&&w.questions)||null,scoring:(w&&w.scoring)||null,verdicts:{}};
   $('#settingsPanel').hidden=true;
-  ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs','addManual'].forEach(function(x){$('#'+x).disabled=false;});
+  ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs','addManual','importDocs'].forEach(function(x){$('#'+x).disabled=false;});
   db.collection('worksheets').doc(id).get().then(function(d){
     if(d.exists){var c=d.data();curWsCfg.title=c.title||curWsCfg.title;curWsCfg.category=c.category||curWsCfg.category;curWsCfg.url=c.url||curWsCfg.url;curWsCfg.summary=c.summary||curWsCfg.summary;curWsCfg.answerKey=c.answerKey||curWsCfg.answerKey;curWsCfg.rubric=c.rubric||curWsCfg.rubric;curWsCfg.questions=c.questions||curWsCfg.questions;curWsCfg.scoring=c.scoring||curWsCfg.scoring;curWsCfg.verdicts=c.verdicts||{};}
     $('#wsMeta').textContent=wsMetaText(id);
@@ -1456,16 +1481,20 @@ function calcScore(s,cfg,aiScore,bonusScore,aiMax){
   var bset=bonusSetOf(s);
   var expSet=s.experienceAnswers||{};
   var combine=Object.assign({},s.scoreAnswers||{},s.experienceAnswers||{});
-  // 加分題不進扣分池、答對才加分（《學習單資料與提交規範》§2-b）
-  var qids=Object.keys(combine).filter(function(q){return !bset[q];});
-  var objBonusQids=Object.keys(combine).filter(function(q){return bset[q];});
-  // 這份學習單有的非開放題，這位學生的繳交裡卻沒有（整題沒交、補登的空紀錄）＝沒作答，照樣扣分
   var stQt=s.qtypes||{};
-  nonOpenQids().forEach(function(q){if(!(q in combine)&&!bset[q]&&stQt[q]!=='open'&&qids.indexOf(q)<0)qids.push(q);});
+  // 體驗題一律不計分（2026-10-06 教師定案）：不進扣分池，寫不寫都不影響分數，只算進完成度
+  function isExpQ(q){return (q in expSet)||stQt[q]==='experience';}
+  // 加分題不進扣分池、答對才加分（《學習單資料與提交規範》§2-b）
+  var qids=Object.keys(combine).filter(function(q){return !bset[q]&&!isExpQ(q);});
+  var objBonusQids=Object.keys(combine).filter(function(q){return bset[q];});
+  // 這份學習單有的計分題，這位學生的繳交裡卻沒有（整題沒交、補登的空紀錄）＝沒作答，照樣扣分
+  nonOpenQids().forEach(function(q){if(!(q in combine)&&!bset[q]&&stQt[q]!=='open'&&stQt[q]!=='experience'&&qids.indexOf(q)<0)qids.push(q);});
   var hasOpen=wsHasMainOpen(s);   // 看整份學習單有沒有主要開放題，不是看這位學生有沒有寫；開放題只有加分題時，不保留開放題分數
   var base=cfg.base||100,deduction=cfg.deduction||0;
   var openWeight=hasOpen?(cfg.openWeight||0):0,basePool;
-  if(!qids.length){basePool=0;if(hasOpen)openWeight=base;}          // 全開放題：AI 拿走整個總分
+  var onlyExp=!qids.length&&!hasOpen&&Object.keys(combine).some(function(q){return !bset[q];});
+  if(onlyExp){basePool=base;}                                        // 只有體驗題：不扣分，給滿總分
+  else if(!qids.length){basePool=0;if(hasOpen)openWeight=base;}          // 全開放題：AI 拿走整個總分
   else basePool=Math.max(0,base-openWeight);
   var deductTotal=0,wrong=[];
   qids.forEach(function(q){
@@ -1476,16 +1505,16 @@ function calcScore(s,cfg,aiScore,bonusScore,aiMax){
   });
   var objBonus=0;
   objBonusQids.forEach(function(q){if(itemPassed(combine[q],q in expSet))objBonus+=(cfg.itemPoints[q]!=null)?Number(cfg.itemPoints[q]):deduction;});
-  var objective=qids.length?Math.max(0,basePool-deductTotal):null;
+  var objective=(qids.length||onlyExp)?Math.max(0,basePool-deductTotal):null;
   var openPoints=hasOpen?Math.round((Number(aiScore)||0)/aiMax*openWeight):0;
   bonusScore=bonusScore!=null?Number(bonusScore):Number(s.bonusScore||0);
-  var total=(qids.length||hasOpen||bonusScore||objBonus)?Math.round((objective||0)+openPoints+bonusScore+objBonus):null;
+  var total=(qids.length||onlyExp||hasOpen||bonusScore||objBonus)?Math.round((objective||0)+openPoints+bonusScore+objBonus):null;
   return {objective:objective,basePool:basePool,deductTotal:deductTotal,wrong:wrong,qids:qids,
     hasOpen:hasOpen,openWeight:openWeight,openPoints:openPoints,aiMax:aiMax,bonusScore:bonusScore,objBonus:objBonus,total:total};
 }
 function renderCalcBox(calc,aiScore,aiFeedback){
   var h='';
-  if(calc.qids.length)h+='<div class="ans"><div class="q">非開放題（計分／體驗，滿分 '+calc.basePool+'）</div><div class="a">'+calc.objective+' 分</div>'
+  if(calc.qids.length)h+='<div class="ans"><div class="q">計分題（體驗題不計分，滿分 '+calc.basePool+'）</div><div class="a">'+calc.objective+' 分</div>'
     +(calc.wrong.length?'<div class="q" style="margin-top:6px">答錯／未完成（共扣 '+calc.deductTotal+' 分）</div><div class="a" style="font-weight:400">'+esc(calc.wrong.join('、'))+'</div>':'<div class="q" style="margin-top:6px;color:var(--ok)">全部正確</div>')+'</div>';
   if(calc.hasOpen){
     var same=calc.openWeight===calc.aiMax;
@@ -2124,11 +2153,13 @@ function renderScGrid(){
   if(!closed.length&&!opens.length){box.innerHTML=head+'<div class="note" style="margin:0">尚無繳交，讀不到題號。可先用上面的預設值；有人繳交後回來逐題調整。</div>';return;}
   var KIND={score:'檢測',experience:'體驗',open:'開放'};
   var cell=function(q,cls,kind,val,ph,ro){var t=questionTextOf(q);
-    return '<label class="scCell'+(b[q]?' bonus':'')+(ro?' ro':'')+'" title="'+esc(q+(t?'：'+t:'')+(ro?'（檢核點：配分＝各檢核點加總，請在下方卡片改）':''))+'">'
+    return '<label class="scCell'+(b[q]?' bonus':'')+(ro?' ro':'')+'" title="'+esc(q+(t?'：'+t:'')+(cls==='sc-exp'?'（體驗題不計分）':ro?'（檢核點：配分＝各檢核點加總，請在下方卡片改）':''))+'">'
       +'<span class="qn">'+esc(q)+' <span class="qk">'+kind+(b[q]?'·加分':'')+'</span></span>'
       +'<input class="'+cls+'" data-q="'+esc(q)+'" inputmode="decimal" value="'+(val==null?'':esc(val))+'" placeholder="'+esc(ph)+'"'+(ro?' disabled':'')+'></label>';};
   var h='<div class="scGrid">';
-  closed.forEach(function(q){h+=cell(q,'sc-item',KIND[qtypeOf(q)]||'題',itemPoints[q],$('#scDeduct').value||1,false);});
+  // 體驗題不計分：灰掉不能填（加分題例外，仍是答對才加）
+  closed.forEach(function(q){var exp=qtypeOf(q)==='experience'&&!b[q];
+    h+=cell(q,exp?'sc-exp':'sc-item',exp?'體驗·不計分':(KIND[qtypeOf(q)]||'題'),exp?'':itemPoints[q],exp?'0':($('#scDeduct').value||1),exp);});
   opens.forEach(function(q){var c=cardByQid(q),sp=c?readCard(c):null;
     h+=cell(q,'sc-open','開放',sp&&sp.points!=null?sp.points:'',b[q]?3:(legacyRubricPoints()||10),sp&&sp.mode==='checklist');});
   box.innerHTML=head+h+'</div>';
@@ -2401,7 +2432,7 @@ $('#wsDelete').addEventListener('click',function(){
     $('#settingsPanel').hidden=true;
     curWs=null;curWsCfg={};
     $('#wsSelect').value='';
-    ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs','addManual'].forEach(function(x){$('#'+x).disabled=true;});
+    ['wsSettings','aiGrade','exportGrades','pushClassroom','refreshSubs','addManual','importDocs'].forEach(function(x){$('#'+x).disabled=true;});
     $('#wsMeta').textContent=curCourse?'請從右上角下拉選單選一份學習單。':'從左側選一個班級。';
     $('#stSub').textContent='—';$('#stGraded').textContent='—';$('#stPending').textContent='—';$('#stAvg').textContent='—';
     $('#rows').innerHTML='<tr><td colspan="8"><div class="empty"><div class="t">尚未選擇學習單</div>從右上角下拉選單選一份學習單。</div></td></tr>';
@@ -2952,6 +2983,136 @@ $('#ccGo').addEventListener('click',function(){
       +(r.failed&&r.failed.length?('，失敗 '+r.failed.length+' 筆'):'')+'，分數已發還學生。';
     if(pick==='__create__')$('#ccCourse').dispatchEvent(new Event('change'));   // 重新列作業，下次就對得到同名這份
   }).catch(function(e){self.disabled=false;note.style.color='var(--warn)';note.textContent='失敗：'+e.message;});
+});
+// ================= 匯入 Classroom 文件（2026-10-07）=================
+// 學生在作業裡「＋新增或建立 → 文件」做的 Google 文件，後端（/api/classroom/doc-texts，需 drive.readonly 授權）
+// 匯出成純文字；這裡對應到座號，寫進 submissions/{學習單}__{年}-{班}-{座號} 的 openAnswers[qid]，之後走原本的批次評分。
+var DC={students:[],rows:[],course:null};
+function dcPost(p,body){return fetch(WORKBENCH+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();});}
+function dcQidOptions(){
+  var b=bonusSet(),set={},out=[];
+  mainOpenQids().forEach(function(q){set[q]=1;});
+  (curWsCfg.questions||[]).forEach(function(q){if(q&&q.qid&&!b[q.qid])set[q.qid]=1;});
+  Object.keys(set).sort().forEach(function(q){var t=questionTextOf(q);out.push('<option value="'+esc(q)+'">'+esc(q)+(t?'　'+esc(t.slice(0,24))+(t.length>24?'…':''):'')+'</option>');});
+  if(!out.length)out.push('<option value="doc">doc　（還沒有開放題設定，先存成 doc）</option>');
+  out.push('<option value="__custom__">自己輸入題號…</option>');
+  return out.join('');
+}
+// 學習單設定還沒帶入評分設定、學生也還沒交過開放題時，下拉裡不會有那題；讓老師直接打題號（例：q2）
+$('#dcQid').addEventListener('change',function(){
+  if(this.value!=='__custom__')return;
+  var q=(prompt('要寫進哪一題？輸入題號（例：q2）','q2')||'').trim();
+  if(!/^[0-9A-Za-z_-]+$/.test(q)){this.selectedIndex=0;return;}
+  var o=document.createElement('option');o.value=q;o.textContent=q;this.insertBefore(o,this.lastChild);this.value=q;
+});
+$('#importDocs').addEventListener('click',function(){
+  var course=manualCourse();
+  if(!curWs){alert('請先選一份學習單。');return;}
+  if(!course||course.grade==null||course.className==null){alert('請先在左側選一個已匯入名單的班級。');return;}
+  DC={students:[],rows:[],course:course};
+  $('#dcTitle').textContent='匯入 Classroom 文件 · '+(course.name||curCourse)+' · '+(curWsCfg.title||curWs);
+  $('#dcQid').innerHTML=dcQidOptions();
+  $('#dcWork').innerHTML='<option value="">先選課程</option>';$('#dcWorkNote').textContent='';
+  $('#dcWrap').style.display='none';$('#dcMap').innerHTML='';$('#dcNote').textContent='';
+  $('#dcLoad').disabled=true;$('#dcGo').disabled=true;
+  $('#dcCourse').innerHTML='<option value="">載入課程中…</option>';
+  $('#docModal').classList.remove('off');
+  ccGet('/api/google/courses').then(function(r){
+    if(!r.ok){$('#dcCourse').innerHTML='<option value="">'+esc(r.error||'讀不到 Classroom 課程，請先在設定授權 Google')+'</option>';return;}
+    var code=String(course.grade)+String(course.className).padStart(2,'0'),guess=course.classroomCourseId||'';
+    if(!guess)r.courses.forEach(function(x){if(!guess&&new RegExp('(^|\\D)'+code+'(\\D|$)').test((x.name||'')+' '+(x.section||'')))guess=x.id;});
+    $('#dcCourse').innerHTML='<option value="">選擇課程…</option>'+r.courses.map(function(x){return '<option value="'+esc(x.id)+'"'+(x.id===guess?' selected':'')+'>'+esc(x.name+(x.section?' · '+x.section:''))+'</option>';}).join('');
+    if(guess)$('#dcCourse').dispatchEvent(new Event('change'));
+  }).catch(function(e){$('#dcCourse').innerHTML='<option value="">讀取失敗：'+esc(e.message)+'</option>';});
+});
+$('#dcCancel').addEventListener('click',function(){$('#docModal').classList.add('off');});
+$('#dcCourse').addEventListener('change',function(){
+  var cid=this.value;$('#dcWrap').style.display='none';$('#dcGo').disabled=true;$('#dcLoad').disabled=true;DC.students=[];
+  if(!cid){$('#dcWork').innerHTML='<option value="">先選課程</option>';return;}
+  $('#dcWork').innerHTML='<option value="">載入作業中…</option>';
+  Promise.all([ccGet('/api/classroom/coursework?courseId='+encodeURIComponent(cid)),
+               ccGet('/api/classroom/students?courseId='+encodeURIComponent(cid))]).then(function(res){
+    var r=res[0];DC.students=(res[1].ok&&res[1].students)?res[1].students:[];
+    if(!r.ok){$('#dcWork').innerHTML='<option value="">'+esc(r.error||'讀取失敗')+'</option>';return;}
+    var works=r.courseWork||[],wsName=(curWsCfg.title||curWs||'').trim(),wk=weekOf(),hit=null;
+    if(wk!=null){var pat=new RegExp('^第0*'+wk+'週');works.forEach(function(w){if(!hit&&pat.test((w.title||'').trim()))hit=w;});}
+    if(!hit){var want=normName(wsName).toLowerCase();works.forEach(function(w){if(!hit&&normName(w.title).toLowerCase()===want)hit=w;});}
+    $('#dcWork').innerHTML='<option value="">選擇作業…</option>'+works.map(function(w){return '<option value="'+esc(w.id)+'">'+esc(w.title||w.id)+'</option>';}).join('');
+    if(hit){$('#dcWork').value=hit.id;$('#dcWorkNote').style.color='var(--ok)';$('#dcWorkNote').textContent='已自動選「'+hit.title+'」，不對的話從上面改選。';$('#dcLoad').disabled=false;}
+    else{$('#dcWorkNote').style.color='var(--muted)';$('#dcWorkNote').textContent='請選學生交文件的那份作業。';}
+  }).catch(function(e){$('#dcWork').innerHTML='<option value="">讀取失敗：'+esc(e.message)+'</option>';});
+  var c=DC.course;if(c&&c.classroomCourseId!==cid){c.classroomCourseId=cid;db.collection('courses').doc(c.id).set({classroomCourseId:cid},{merge:true}).catch(function(){});}
+});
+$('#dcWork').addEventListener('change',function(){$('#dcLoad').disabled=!this.value;$('#dcWrap').style.display='none';$('#dcGo').disabled=true;});
+$('#dcLoad').addEventListener('click',function(){
+  var btn=this,cid=$('#dcCourse').value,wid=$('#dcWork').value,note=$('#dcNote');
+  if(!cid||!wid)return;
+  btn.disabled=true;note.style.color='var(--muted)';note.textContent='讀取學生文件中…（一班約 10～30 秒）';$('#dcWrap').style.display='none';
+  var rosterP=db.collection('courses').doc(DC.course.id).collection('students').get().then(function(qs){
+    var bySeat={},byUid={},byName={};qs.forEach(function(d){var v=d.data();if(v.seatNo==null)return;bySeat[v.seatNo]=v;if(v.classroomUserId)byUid[v.classroomUserId]=v.seatNo;if(v.name)byName[normName(v.name)]=v.seatNo;});
+    return {bySeat:bySeat,byUid:byUid,byName:byName};}).catch(function(){return {bySeat:{},byUid:{},byName:{}};});
+  Promise.all([dcPost('/api/classroom/doc-texts',{courseId:cid,courseWorkId:wid}),rosterP,loadSubs(curWs,true)]).then(function(res){
+    btn.disabled=false;
+    var r=res[0],ros=res[1];
+    if(!r.ok){note.style.color='var(--warn)';note.textContent=r.error||'讀取失敗';return;}
+    var nameOf={};DC.students.forEach(function(st){nameOf[st.userId]=st.name;});
+    var have={};currentSubs().forEach(function(s){if(s.studentId!=null)have[Number(s.studentId)]=s;});
+    var q=$('#dcQid').value;
+    DC.rows=(r.submissions||[]).map(function(sb){
+      var nm=nameOf[sb.userId]||'',seat=ros.byUid[sb.userId];
+      if(seat==null){var p=parseClassroomName(nm);if(p&&p.grade===DC.course.grade&&p.className===DC.course.className)seat=p.seatNo;else if(p&&ros.byName[normName(p.name)]!=null)seat=ros.byName[normName(p.name)];}
+      if(seat==null&&ros.byName[normName(nm)]!=null)seat=ros.byName[normName(nm)];
+      var ok=(sb.docs||[]).filter(function(d){return d.text;}),bad=(sb.docs||[]).filter(function(d){return !d.text;});
+      var text=ok.length===1?ok[0].text:ok.map(function(d){return '【'+d.title+'】\n'+d.text;}).join('\n\n');
+      return {userId:sb.userId,name:nm,seat:seat==null?'':seat,state:sb.state,docs:sb.docs||[],ok:ok,bad:bad,text:text};
+    }).sort(function(a,b){return (Number(a.seat)||999)-(Number(b.seat)||999);});
+    var withText=DC.rows.filter(function(x){return x.text;}).length,mapped=DC.rows.filter(function(x){return x.text&&x.seat!=='';}).length;
+    var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
+      +['','座號','Classroom 學生','文件','內容開頭'].map(function(t){return '<th style="text-align:left;padding:7px 8px;position:sticky;top:0;background:var(--surface2)">'+t+'</th>';}).join('')+'</tr></thead><tbody>';
+    DC.rows.forEach(function(x,i){
+      var docCell=x.docs.length?x.docs.map(function(d){return '<div><a href="'+esc(d.link)+'" target="_blank" rel="noopener">'+esc(d.title||'文件')+'</a>'+(d.text?' <span style="color:var(--muted)">'+d.text.length+' 字</span>':' <span style="color:var(--warn)">'+esc(d.error||'讀不到')+'</span>')+'</div>';}).join(''):'<span style="color:var(--muted)">沒有附文件'+(x.state==='TURNED_IN'?'':'（'+esc(x.state||'')+'）')+'</span>';
+      var old=x.seat!==''&&have[Number(x.seat)]&&have[Number(x.seat)].openAnswers&&have[Number(x.seat)].openAnswers[q];
+      h+='<tr><td style="padding:6px 8px;border-top:1px solid var(--line)"><input type="checkbox" class="dcChk" data-i="'+i+'"'+(x.text&&x.seat!==''?' checked':'')+(x.text?'':' disabled')+'></td>'
+        +'<td style="padding:6px 8px;border-top:1px solid var(--line)"><input class="dcSeat" data-i="'+i+'" value="'+esc(x.seat)+'" inputmode="numeric" style="width:52px;padding:4px 6px;border:1px solid '+(x.seat===''&&x.text?'var(--warn)':'var(--line2)')+';border-radius:6px"></td>'
+        +'<td style="padding:6px 8px;border-top:1px solid var(--line)">'+esc(x.name||x.userId)+(old?'<div style="color:var(--warn);font-size:12px">已有答案，會覆蓋</div>':'')+'</td>'
+        +'<td style="padding:6px 8px;border-top:1px solid var(--line)">'+docCell+'</td>'
+        +'<td style="padding:6px 8px;border-top:1px solid var(--line);color:var(--muted);max-width:220px">'+esc((x.text||'').replace(/\s+/g,' ').slice(0,40))+'</td></tr>';
+    });
+    $('#dcMap').innerHTML=h+'</tbody></table>';
+    $('#dcMap').querySelectorAll('.dcSeat').forEach(function(inp){inp.addEventListener('input',function(){
+      var x=DC.rows[+this.dataset.i];x.seat=digitsOnly(this.value);this.value=x.seat;
+      var chk=$('#dcMap').querySelector('.dcChk[data-i="'+this.dataset.i+'"]');if(x.text&&x.seat!=='')chk.checked=true;});});
+    $('#dcMapNote').textContent='共 '+DC.rows.length+' 位學生，'+withText+' 位有讀到文件，'+mapped+' 位已對到座號'+(withText>mapped?'（對不到的請在「座號」欄手動填）':'')+'。';
+    $('#dcWrap').style.display='';$('#dcGo').disabled=!withText;note.textContent='';
+  }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='讀取失敗：'+friendlyErr(e);});
+});
+$('#dcGo').addEventListener('click',function(){
+  var note=$('#dcNote'),course=DC.course,q=$('#dcQid').value,ws=curWs,wid=$('#dcWork').value;
+  var pick=[].map.call($('#dcMap').querySelectorAll('.dcChk:checked'),function(c){return DC.rows[+c.dataset.i];}).filter(function(x){return x.text;});
+  var noSeat=pick.filter(function(x){return !(Number(x.seat)>0);});
+  if(!pick.length){note.style.color='var(--warn)';note.textContent='請先勾選要寫入的學生。';return;}
+  if(noSeat.length){note.style.color='var(--warn)';note.textContent='還有 '+noSeat.length+' 位勾了但沒有座號：'+noSeat.map(function(x){return x.name||x.userId;}).join('、');return;}
+  var seen={},dup=[];pick.forEach(function(x){var k=Number(x.seat);if(seen[k])dup.push(k);seen[k]=1;});
+  if(dup.length){note.style.color='var(--warn)';note.textContent='座號重複：'+dup.join('、')+'，請修正。';return;}
+  if(!confirm('要把 '+pick.length+' 份文件寫進「'+(curWsCfg.title||ws)+'」的 '+q+' 嗎？\n已有答案的會被文件內容覆蓋；寫完請按「批次評分」。'))return;
+  var have={};currentSubs().forEach(function(s){if(s.studentId!=null)have[Number(s.studentId)]=s;});
+  var qt=questionTextOf(q),btn=this,batch=db.batch(),TS=firebase.firestore.FieldValue.serverTimestamp();
+  pick.forEach(function(x){
+    var seat=Number(x.seat),src=x.ok.map(function(d){return {fileId:d.id,title:d.title,link:d.link};});
+    var payload={worksheetId:ws,worksheetTitle:curWsCfg.title||ws,grade:course.grade,className:course.className,studentId:seat,
+      answers:{},qtypes:{},openAnswers:{},docSource:{},docImportedAt:TS};
+    payload.answers[q]=x.text;payload.qtypes[q]='open';payload.openAnswers[q]=x.text;
+    payload.docSource[q]={courseWorkId:wid,classroomUserId:x.userId,files:src};
+    if(qt){payload.qtexts={};payload.qtexts[q]=qt;}
+    if(!have[seat]){payload.status='submitted';payload.submittedAt=TS;payload.scoreAnswers={};payload.experienceAnswers={};payload.importedFrom='classroom-doc';}
+    batch.set(db.collection('submissions').doc(ws+'__'+course.grade+'-'+course.className+'-'+seat),payload,{merge:true});
+  });
+  btn.disabled=true;note.style.color='var(--muted)';note.textContent='寫入中…';
+  batch.commit().then(function(){
+    btn.disabled=false;note.style.color='var(--ok)';note.textContent='已寫入 '+pick.length+' 份。關閉視窗後按「批次評分」交給 AI。';
+    $('#mainNote').textContent='已從 Classroom 文件匯入 '+pick.length+' 份到 '+q+'，請按「批次評分」。';
+    return ws===curWs?loadSubs(ws,true):null;
+  }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='寫入失敗：'+friendlyErr(e);});
 });
 // ================= 課表：查當下星期／節次 → 一鍵「上課」 =================
 // 存在伺服器端 timetable.json（GET/POST /api/timetable），不放 Firestore：課表是這台電腦上

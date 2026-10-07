@@ -6,7 +6,7 @@
 並且**自帶一份 Google Classroom 授權與 AI 評分後端**，讓評分平台不必依賴「工作台」
 （8770）就能獨立運作——設定存在本資料夾自己的 config.json，跟工作台的設定各自獨立。
 """
-import json, re, io, sys, math, base64, zipfile, mimetypes, unicodedata, urllib.request, urllib.parse, time
+import json, re, io, sys, math, base64, zipfile, mimetypes, unicodedata, urllib.request, urllib.parse, urllib.error, time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +25,7 @@ GOOGLE_SCOPES = " ".join([
     "https://www.googleapis.com/auth/classroom.coursework.students",
     "https://www.googleapis.com/auth/classroom.rosters.readonly",
     "https://www.googleapis.com/auth/classroom.announcements",   # 繳交紀錄「發布缺交名單」（2026-09-29 加，舊授權要重新授權一次）
+    "https://www.googleapis.com/auth/drive.readonly",            # 讀學生作業附的 Google 文件內容（2026-10-07 加，舊授權要重新授權一次）
 ])
 
 
@@ -1108,6 +1109,85 @@ def classroom_grades(course_id, coursework_id, grades):
     return {"ok": True, "done": len(done), "failed": failed}
 
 
+# ---- 讀學生作業附的 Google 文件（2026-10-07）----
+# 學生在 Classroom 作業按「＋新增或建立 → 文件」做出來的文件，老師帳號本來就有權限看；
+# 這裡用 Drive API 把它匯出成純文字，給教師端「匯入 Classroom 文件」寫進繳交的開放題，再走原本的 AI 評分。
+DOC_TEXT_MAX = 20000
+
+
+def _gapi_text(url):
+    token = google_access_token()
+    if not token:
+        raise RuntimeError("尚未授權 Google（請在設定按『授權 Google』）")
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        raise RuntimeError(f"HTTP {e.code}: {body[:300]}") from None
+
+
+def _doc_text(att):
+    """一個 driveFile 附件 → {id,title,link,text} 或 {…,error}。只有 Google 文件能匯出成文字。"""
+    f = att.get("driveFile") or {}
+    fid = f.get("id")
+    out = {"id": fid, "title": f.get("title", ""), "link": f.get("alternateLink", "")}
+    if not fid:
+        out["error"] = "附件沒有檔案 ID"
+        return out
+    try:
+        meta = _gapi(f"https://www.googleapis.com/drive/v3/files/{fid}?fields=mimeType,name&supportsAllDrives=true")
+        mt = meta.get("mimeType", "")
+        if mt != "application/vnd.google-apps.document":
+            out["error"] = "不是 Google 文件（" + (mt.split("/")[-1] or "未知格式") + "）"
+            return out
+        txt = _gapi_text(f"https://www.googleapis.com/drive/v3/files/{fid}/export?mimeType=text/plain")
+        txt = txt.lstrip("\ufeff").replace("\r\n", "\n").strip()
+        out["text"] = txt[:DOC_TEXT_MAX]
+        if len(txt) > DOC_TEXT_MAX:
+            out["truncated"] = True
+    except Exception as e:
+        msg = str(e)
+        if "403" in msg or "404" in msg:
+            out["error"] = "讀不到這份文件（權限不足或已刪除）"
+        else:
+            out["error"] = msg[:150]
+    return out
+
+
+def classroom_doc_texts(course_id, coursework_id):
+    """列某份作業每位學生附的 Google 文件，並抓成純文字。"""
+    if not (course_id and coursework_id):
+        return {"ok": False, "error": "缺 courseId 或 courseWorkId"}
+    scope = ((read_config().get("google_token") or {}).get("scope") or "")
+    if scope and "drive.readonly" not in scope:
+        return {"ok": False, "needReauth": True,
+                "error": "目前的 Google 授權沒有「讀取雲端文件」權限，請到「設定 → Google Classroom」重新按一次「授權 Google」。"}
+    base = f"https://classroom.googleapis.com/v1/courses/{course_id}/courseWork/{coursework_id}/studentSubmissions"
+    subs, token = [], ""
+    try:
+        while True:
+            d = _gapi(base + "?pageSize=100" + ("&pageToken=" + urllib.parse.quote(token) if token else ""))
+            subs.extend(d.get("studentSubmissions", []))
+            token = d.get("nextPageToken") or ""
+            if not token:
+                break
+    except Exception as e:
+        return {"ok": False, "error": "讀取作業繳交失敗：" + str(e)}
+    rows, jobs = [], []
+    for sb in subs:
+        atts = [a for a in ((sb.get("assignmentSubmission") or {}).get("attachments") or []) if a.get("driveFile")]
+        row = {"userId": sb.get("userId"), "state": sb.get("state", ""), "late": bool(sb.get("late")), "docs": []}
+        rows.append(row)
+        for a in atts:
+            jobs.append((row, a))
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for row, res in zip([j[0] for j in jobs], ex.map(lambda j: _doc_text(j[1]), jobs)):
+            row["docs"].append(res)
+    return {"ok": True, "submissions": rows}
+
+
 def diagnostics():
     cfg = read_config()
     out = {"ai": {"configured": bool(cfg.get("grade_key")), "provider": cfg.get("grade_provider", "")}}
@@ -1236,6 +1316,8 @@ class H(BaseHTTPRequestHandler):
                     data.get("maxPoints", 100), data.get("link", ""), data.get("description", "")))
             if u.path == "/api/classroom/announce":
                 return self._send(200, classroom_announce(data.get("courseId", ""), data.get("text", "")))
+            if u.path == "/api/classroom/doc-texts":
+                return self._send(200, classroom_doc_texts(data.get("courseId", ""), data.get("courseWorkId", "")))
             if u.path == "/api/classroom/grades":
                 return self._send(200, classroom_grades(data.get("courseId", ""), data.get("courseWorkId", ""), data.get("grades", [])))
             return self._send(404, {"error": "no route"})
