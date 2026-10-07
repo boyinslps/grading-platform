@@ -695,6 +695,7 @@
       <div class="field" style="flex:1;min-width:200px"><label>Classroom 課程</label><select id="dcCourse"><option>載入中…</option></select></div>
       <div class="field" style="flex:1;min-width:200px"><label>作業</label><select id="dcWork"><option value="">先選課程</option></select></div>
       <div class="field" style="flex:1;min-width:160px"><label>寫進哪一題（開放題）</label><select id="dcQid"></select></div>
+      <div class="field" style="flex:1;min-width:160px" title="文件裡以「⭐」開頭的那一行起，到文件結尾，當成加分題的答案"><label>文件裡「⭐ 加分」段寫進</label><select id="dcBonus"></select></div>
     </div>
     <div class="note" id="dcWorkNote" style="margin-top:-4px"></div>
     <div style="display:flex;justify-content:flex-end;margin:6px 0 10px"><button class="btn btn-primary" id="dcLoad" disabled>讀取學生文件</button></div>
@@ -2992,11 +2993,27 @@ function dcPost(p,body){return fetch(WORKBENCH+p,{method:'POST',headers:{'Conten
 function dcQidOptions(){
   var b=bonusSet(),set={},out=[];
   mainOpenQids().forEach(function(q){set[q]=1;});
-  (curWsCfg.questions||[]).forEach(function(q){if(q&&q.qid&&!b[q.qid])set[q.qid]=1;});
+  (curWsCfg.questions||[]).forEach(function(q){if(q&&q.qid&&!b[q.qid]&&!/^\s*加分/.test(q.prompt||''))set[q.qid]=1;});
   Object.keys(set).sort().forEach(function(q){var t=questionTextOf(q);out.push('<option value="'+esc(q)+'">'+esc(q)+(t?'　'+esc(t.slice(0,24))+(t.length>24?'…':''):'')+'</option>');});
   if(!out.length)out.push('<option value="doc">doc　（還沒有開放題設定，先存成 doc）</option>');
   out.push('<option value="__custom__">自己輸入題號…</option>');
   return out.join('');
+}
+// 加分題候選：繳交裡標過 bonusQids 的題，加上評分設定裡題幹以「加分」開頭的題
+function dcBonusOptions(){
+  var b=bonusSet(),set={};Object.keys(b).forEach(function(q){set[q]=1;});
+  (curWsCfg.questions||[]).forEach(function(q){if(q&&q.qid&&/^\s*加分/.test(q.prompt||''))set[q.qid]=1;});
+  var keys=Object.keys(set).sort();
+  return '<option value="">不拆（整份寫進左邊那題）</option>'+keys.map(function(q,i){var t=questionTextOf(q);return '<option value="'+esc(q)+'"'+(i===0?' selected':'')+'>'+esc(q)+(t?'　'+esc(t.slice(0,18))+(t.length>18?'…':''):'')+'</option>';}).join('');
+}
+// 把文件拆成「主要內容」與「⭐ 加分」段：從第一個以 ⭐ 開頭的行到結尾都算加分段；
+// 加分段只有範本的「標籤：」沒填內容時，視為沒寫
+function dcSplit(text){
+  var lines=String(text||'').split('\n'),idx=-1;
+  for(var i=0;i<lines.length;i++){if(/^\s*⭐/.test(lines[i])){idx=i;break;}}
+  if(idx<0)return {main:String(text||'').trim(),bonus:''};
+  var rest=lines.slice(idx),filled=rest.slice(1).some(function(l){var t=l.trim();if(!t)return false;var m=t.match(/^[^：:]{0,14}[：:](.*)$/);return m?m[1].trim().length>0:true;});
+  return {main:lines.slice(0,idx).join('\n').trim(),bonus:filled?rest.join('\n').trim():''};
 }
 // 學習單設定還沒帶入評分設定、學生也還沒交過開放題時，下拉裡不會有那題；讓老師直接打題號（例：q2）
 $('#dcQid').addEventListener('change',function(){
@@ -3011,7 +3028,7 @@ $('#importDocs').addEventListener('click',function(){
   if(!course||course.grade==null||course.className==null){alert('請先在左側選一個已匯入名單的班級。');return;}
   DC={students:[],rows:[],course:course};
   $('#dcTitle').textContent='匯入 Classroom 文件 · '+(course.name||curCourse)+' · '+(curWsCfg.title||curWs);
-  $('#dcQid').innerHTML=dcQidOptions();
+  $('#dcQid').innerHTML=dcQidOptions();$('#dcBonus').innerHTML=dcBonusOptions();
   $('#dcWork').innerHTML='<option value="">先選課程</option>';$('#dcWorkNote').textContent='';
   $('#dcWrap').style.display='none';$('#dcMap').innerHTML='';$('#dcNote').textContent='';
   $('#dcLoad').disabled=true;$('#dcGo').disabled=true;
@@ -3043,6 +3060,7 @@ $('#dcCourse').addEventListener('change',function(){
   }).catch(function(e){$('#dcWork').innerHTML='<option value="">讀取失敗：'+esc(e.message)+'</option>';});
   var c=DC.course;if(c&&c.classroomCourseId!==cid){c.classroomCourseId=cid;db.collection('courses').doc(c.id).set({classroomCourseId:cid},{merge:true}).catch(function(){});}
 });
+$('#dcBonus').addEventListener('change',function(){$('#dcWrap').style.display='none';$('#dcGo').disabled=true;});
 $('#dcWork').addEventListener('change',function(){$('#dcLoad').disabled=!this.value;$('#dcWrap').style.display='none';$('#dcGo').disabled=true;});
 $('#dcLoad').addEventListener('click',function(){
   var btn=this,cid=$('#dcCourse').value,wid=$('#dcWork').value,note=$('#dcNote');
@@ -3064,7 +3082,8 @@ $('#dcLoad').addEventListener('click',function(){
       if(seat==null&&ros.byName[normName(nm)]!=null)seat=ros.byName[normName(nm)];
       var ok=(sb.docs||[]).filter(function(d){return d.text;}),bad=(sb.docs||[]).filter(function(d){return !d.text;});
       var text=ok.length===1?ok[0].text:ok.map(function(d){return '【'+d.title+'】\n'+d.text;}).join('\n\n');
-      return {userId:sb.userId,name:nm,seat:seat==null?'':seat,state:sb.state,docs:sb.docs||[],ok:ok,bad:bad,text:text};
+      var sp=$('#dcBonus').value?dcSplit(text):{main:text,bonus:''};
+      return {userId:sb.userId,name:nm,seat:seat==null?'':seat,state:sb.state,docs:sb.docs||[],ok:ok,bad:bad,text:sp.main,bonus:sp.bonus,raw:text};
     }).sort(function(a,b){return (Number(a.seat)||999)-(Number(b.seat)||999);});
     var withText=DC.rows.filter(function(x){return x.text;}).length,mapped=DC.rows.filter(function(x){return x.text&&x.seat!=='';}).length;
     var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'
@@ -3076,7 +3095,7 @@ $('#dcLoad').addEventListener('click',function(){
         +'<td style="padding:6px 8px;border-top:1px solid var(--line)"><input class="dcSeat" data-i="'+i+'" value="'+esc(x.seat)+'" inputmode="numeric" style="width:52px;padding:4px 6px;border:1px solid '+(x.seat===''&&x.text?'var(--warn)':'var(--line2)')+';border-radius:6px"></td>'
         +'<td style="padding:6px 8px;border-top:1px solid var(--line)">'+esc(x.name||x.userId)+(old?'<div style="color:var(--warn);font-size:12px">已有答案，會覆蓋</div>':'')+'</td>'
         +'<td style="padding:6px 8px;border-top:1px solid var(--line)">'+docCell+'</td>'
-        +'<td style="padding:6px 8px;border-top:1px solid var(--line);color:var(--muted);max-width:220px">'+esc((x.text||'').replace(/\s+/g,' ').slice(0,40))+'</td></tr>';
+        +'<td style="padding:6px 8px;border-top:1px solid var(--line);color:var(--muted);max-width:220px">'+esc((x.text||'').replace(/\s+/g,' ').slice(0,40))+(x.bonus?'<div style="color:var(--ok);font-size:12px">⭐ 加分有寫</div>':'')+'</td></tr>';
     });
     $('#dcMap').innerHTML=h+'</tbody></table>';
     $('#dcMap').querySelectorAll('.dcSeat').forEach(function(inp){inp.addEventListener('input',function(){
@@ -3094,9 +3113,11 @@ $('#dcGo').addEventListener('click',function(){
   if(noSeat.length){note.style.color='var(--warn)';note.textContent='還有 '+noSeat.length+' 位勾了但沒有座號：'+noSeat.map(function(x){return x.name||x.userId;}).join('、');return;}
   var seen={},dup=[];pick.forEach(function(x){var k=Number(x.seat);if(seen[k])dup.push(k);seen[k]=1;});
   if(dup.length){note.style.color='var(--warn)';note.textContent='座號重複：'+dup.join('、')+'，請修正。';return;}
-  if(!confirm('要把 '+pick.length+' 份文件寫進「'+(curWsCfg.title||ws)+'」的 '+q+' 嗎？\n已有答案的會被文件內容覆蓋；寫完請按「批次評分」。'))return;
+  var nb=$('#dcBonus').value?pick.filter(function(x){return x.bonus;}).length:0;
+  if(!confirm('要把 '+pick.length+' 份文件寫進「'+(curWsCfg.title||ws)+'」的 '+q+(nb?('（其中 '+nb+' 份有寫加分段，寫進 '+$('#dcBonus').value+'）'):'')+' 嗎？\n已有答案的會被文件內容覆蓋；寫完請按「批次評分」。'))return;
   var have={};currentSubs().forEach(function(s){if(s.studentId!=null)have[Number(s.studentId)]=s;});
-  var qt=questionTextOf(q),btn=this,batch=db.batch(),TS=firebase.firestore.FieldValue.serverTimestamp();
+  var qt=questionTextOf(q),bq=$('#dcBonus').value,bqt=bq?questionTextOf(bq):'',btn=this,batch=db.batch(),TS=firebase.firestore.FieldValue.serverTimestamp();
+  if(bq&&bq===q){note.style.color='var(--warn)';note.textContent='加分題不能跟主要那題同一個題號。';return;}
   pick.forEach(function(x){
     var seat=Number(x.seat),src=x.ok.map(function(d){return {fileId:d.id,title:d.title,link:d.link};});
     var payload={worksheetId:ws,worksheetTitle:curWsCfg.title||ws,grade:course.grade,className:course.className,studentId:seat,
@@ -3104,6 +3125,11 @@ $('#dcGo').addEventListener('click',function(){
     payload.answers[q]=x.text;payload.qtypes[q]='open';payload.openAnswers[q]=x.text;
     payload.docSource[q]={courseWorkId:wid,classroomUserId:x.userId,files:src};
     if(qt){payload.qtexts={};payload.qtexts[q]=qt;}
+    if(bq){
+      payload.bonusQids=firebase.firestore.FieldValue.arrayUnion(bq);
+      if(x.bonus){payload.answers[bq]=x.bonus;payload.qtypes[bq]='open';payload.openAnswers[bq]=x.bonus;payload.bonusAnswers={};payload.bonusAnswers[bq]={given:x.bonus,completed:true};
+        if(bqt){payload.qtexts=payload.qtexts||{};payload.qtexts[bq]=bqt;}}
+    }
     if(!have[seat]){payload.status='submitted';payload.submittedAt=TS;payload.scoreAnswers={};payload.experienceAnswers={};payload.importedFrom='classroom-doc';}
     batch.set(db.collection('submissions').doc(ws+'__'+course.grade+'-'+course.className+'-'+seat),payload,{merge:true});
   });

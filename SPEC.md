@@ -270,6 +270,7 @@ quizzes/{wsId}                           （L01 沿用）老師控制的「公�
 - **前提**：學生要在 Classroom 作業裡按「＋新增或建立 → 文件」建立（或把文件附到作業），老師帳號才有權限讀；授權要有 `drive.readonly`（Google 會顯示「未經驗證的應用程式」，因為是老師自己的 OAuth client，按繼續即可）。
 - **流程**（教師端工具列「匯入 Classroom 文件」）：選 Classroom 課程（預設 `courses/{班}.classroomCourseId`，沒有就用課程名稱裡的年班碼猜）→ 選作業（先找「第X週」開頭，再找同名）→ 選要寫進哪一題開放題（下拉列出主要開放題＋評分設定裡的題號，也可自己輸入）→「讀取學生文件」→ 表格列出每位學生的文件、字數、讀不到的原因（不是 Google 文件／權限不足）→ 座號自動對應（名單的 `classroomUserId` → Classroom 姓名「年班 座號 姓名」解析 → 名單姓名），對不到的手動填 → 「寫入繳交」。
 - **寫入**：`submissions/{學習單}__{年}-{班}-{座號}` 以 merge 寫入 `answers/openAnswers[qid]`＝文件全文、`qtypes[qid]='open'`、`qtexts[qid]`（有題幹時）、`docSource[qid]={courseWorkId, classroomUserId, files:[{fileId,title,link}]}`、`docImportedAt`。該生原本沒有繳交紀錄時，另外補 `status:'submitted'`、`submittedAt`、空的 `scoreAnswers/experienceAnswers`、`importedFrom:'classroom-doc'`（**不標 `manual`**，它是學生真正的作品）。已有答案會被覆蓋，表格會先標「會覆蓋」。
+- **加分段（2026-10-07 補）**：文件裡從第一個以「⭐」開頭的行到結尾，視為加分題答案。視窗的「文件裡『⭐ 加分』段寫進」選加分題號（預設＝繳交裡的 `bonusQids` 或評分設定中題幹以「加分」開頭的題），匯入時拆開：前段寫主要題、加分段寫 `openAnswers/bonusAnswers[加分題]`，並 `arrayUnion` 進 `bonusQids`。加分段只有範本的「標籤：」沒填內容時視為沒寫，不寫入答案。選「不拆」就整份寫進主要題。
 - **之後**：照常按「批次評分」，AI 依該題的評分設定評文件內容。重新匯入＝用最新的文件內容覆蓋。
 - **學習單端配合**：題目改成「寫在文件、交在 Classroom」，學習單繳交只送其他題（例：L04 只送加分題 q3），不要再放「貼回來」的大框；`grading-spec` 仍寫該題（q2）的評分設定，題幹註明「老師從 Classroom 作業讀取文件內容」。
 
