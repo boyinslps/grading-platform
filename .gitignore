@@ -29,3 +29,9 @@ submissions*.json
 名單*
 成績*
 繳交*
+
+# 靠椅子紀錄收件匣（年級/班級/座號，學生資料不進 git）
+chair-inbox/
+
+# 本機白板辨識環境（install_ocr.py 建立，約 320 MB，每台電腦自己裝）
+ocr-runtime/

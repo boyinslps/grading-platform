@@ -26,6 +26,7 @@
   - `teacher.html` 改讀新欄位：`wkLabel()`/`wkSortKey()` 取代 seatNo/studentName 顯示與排序；表格合併「座號/姓名」為單一「學生」欄＋顯示正確率/完成度；CSV 匯出改列年級/班級/學號/正確率/體驗完成度；Classroom 對應表格顯示改用 wkLabel；`gradeOne()` 改只把 `openAnswers` 送 AI（不再誤把投票/勾選丟給 AI「評分」）、最終分優先採用學習單自算的 `accuracyRate`。**已實測**：無 console error，`wkLabel`/`wkSortKey` 行為正確。
   - `SPEC.md` 全面更新（架構圖、資料模型指向新規範、API 表對齊實際路由、§8 決策定案、§9 新增「已知限制」：新身分模型無姓名，Classroom 自動姓名比對對新式提交失效，只能手動指定）。
   - 各規範文件互相加了指向新規範的「延伸」連結，避免未來學習單製作漏看。
+- [x] **P10 🪑 靠椅子紀錄（2026-10-08 教師指定）**：學生端關卡 `引導規範/chair-gate/chair-gate.js`（攔截 `#submitBtn`，😠＋累計次數＋倒數等待，失敗一律放行，已內嵌 9 份學習單）；平台端「🪑 靠椅子」面板（總開關／秒數階梯／免等待分鐘／待匯入／手動登記／紀錄清單）；`server.py` 新增 `/api/chair-inbox`；`firestore.rules` 新增 `chairSettings`／`chairLog`。2026-10-12：頁首開關一按即生效、面板勾選框即時儲存；新增「上傳白板照片→本機辨識（RapidOCR／Windows 內建，不送 LLM）」。詳見 SPEC §7-q。**待教師：把新的 firestore.rules 貼進 Firebase Console 才會生效。**
 - [ ] **P6 工作台整合**：成品階段一鍵綁定學習單/開評分台；rubric 編輯器。
 - [x] **P9 課表與一鍵「上課」（2026-09-17 教師指定）**：頁首「課表」（格子編輯＋貼上匯入＋節次時間＋本週學習單）、主畫面「現在這節」卡片、一顆「上課」同時開學習單 `#admin` 與即時繳交視窗。課表存 `timetable.json`（`GET/POST /api/timetable`），不進 Firestore。詳見 SPEC §7-i。
 - [x] **P8 教師指定的一批強化**（名單/篩選/評分UX/學習單規範）：

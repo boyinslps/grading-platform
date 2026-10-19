@@ -15,6 +15,7 @@
 | `worksheets.json` | 學習單登錄檔：完成一份就把網址寫進來 |
 | `timetable.json` | 課表（星期×節次→班級、節次上下課時間、每班本週學習單）——第一次按「儲存課表」才產生，**不進 git** |
 | `firestore.rules` | Firestore 安全規則（到 Firebase Console 部署）|
+| `ocr_rapid.py`／`ocr_win.ps1`／`install_ocr.py`／`安裝本機辨識.bat` | 靠椅子白板照片的本機辨識（RapidOCR 進階／Windows 內建備援；`ocr-runtime/` 由安裝程式建立，不進 git） |
 | `server.py` | 本機伺服器（port 8780）：靜態檔＋AI 評分＋Google OAuth／Classroom（含依學習單名稱自動建立作業）|
 | `config.json` | 本專案自己的設定（AI Key、Google client_secret、token）——**執行後自動產生，不進 git** |
 | `啟動評分平台.bat` | 雙擊啟動；用本資料夾自帶的 `runtime\python`（找不到才退而找旁邊工作台的、或系統 Python） |
@@ -28,7 +29,7 @@
    - 登入後點右上「AI 設定」：填 AI 反向代理＋Key（測試並列出模型）；填 Google OAuth client_id/secret，把 `http://127.0.0.1:8780/oauth/callback` 加進該 OAuth 用戶端的「已授權的重新導向 URI」後按「授權 Google」。
 
 ## 資料庫
-沿用 Firebase 專案 `pcclass-94300`（Firestore）。集合：`submissions`（繳交）、`worksheets`（學習單設定/答案）、`courses`（班級名單）、`feeds`（開放題即時同儕動態）。
+沿用 Firebase 專案 `pcclass-94300`（Firestore）。集合：`submissions`（繳交）、`worksheets`（學習單設定/答案）、`courses`（班級名單）、`feeds`（開放題即時同儕動態）、`chairSettings`／`chairLog`（下課靠椅子提醒，見 SPEC §7-q）。
 
 ## 當成獨立 repo 推上 GitHub
 本資料夾不含任何金鑰（`config.json` 已排除），可直接 `git init` 後推成自己的 repo（例：`git@github.com:boyinslps/grading-platform.git`）。

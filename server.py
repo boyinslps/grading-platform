@@ -122,6 +122,137 @@ def save_timetable(data):
     TIMETABLE.write_text(json.dumps(tt, ensure_ascii=False, indent=2), "utf-8")
     return {"ok": True, "timetable": tt}
 
+
+# ========== 靠椅子紀錄收件匣（chair-inbox/*.json；見《學習單資料與提交規範》§3-e）==========
+# 每週五把白板照片交給 Claude 辨識後，結果存成一個 JSON 丟進這裡；老師在評分平台「🪑 靠椅子」按一下寫進 Firebase
+# （Firebase 只有老師登入才寫得進去，伺服器本身沒有任何金鑰，所以不直接寫）。寫完搬到 chair-inbox/done/。
+# 檔案只含年級/班級/座號，不含姓名；整個資料夾列在 .gitignore。
+CHAIR_INBOX = HERE / "chair-inbox"
+_INBOX_NAME = re.compile(r"^[^\\/:*?\"<>|]+\.json$")
+
+
+def _int_list(v):
+    out = []
+    for x in (v if isinstance(v, list) else []):
+        try:
+            n = int(x)
+        except Exception:
+            continue
+        if 1 <= n <= 99 and n not in out:
+            out.append(n)
+    return sorted(out)
+
+
+def chair_inbox_list():
+    """[{name, date, note, entries:[{grade, className, seats:[…]}]}]；格式不對的檔案標 bad 讓老師看得出來。"""
+    items = []
+    if CHAIR_INBOX.is_dir():
+        for f in sorted(CHAIR_INBOX.glob("*.json")):
+            try:
+                d = json.loads(f.read_text("utf-8"))
+                date = str(d.get("date", ""))
+                if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+                    raise ValueError("date 需為 YYYY-MM-DD")
+                entries = []
+                for e in d.get("entries", []):
+                    g, c = int(e.get("grade")), int(e.get("className"))
+                    seats = _int_list(e.get("seats"))
+                    if 1 <= g <= 6 and 1 <= c <= 20 and seats:
+                        entries.append({"grade": g, "className": c, "seats": seats})
+                items.append({"name": f.name, "date": date, "note": str(d.get("note", ""))[:200], "entries": entries})
+            except Exception as ex:
+                items.append({"name": f.name, "bad": str(ex)[:120], "entries": []})
+    return {"ok": True, "items": items}
+
+
+# ---------- 白板照片辨識（本機離線，不送任何 LLM）----------
+# 進階：ocr-runtime/（RapidOCR＋ONNX Runtime，由「安裝本機辨識.bat」建立）→ ocr_rapid.py，讀手寫座號準很多。
+# 備援：Windows 內建 OCR（ocr_win.ps1，免安裝，但手寫數字只認得約六成）。兩者都只在這台電腦上跑。
+OCR_RT = HERE / "ocr-runtime" / "python.exe"
+
+
+def chair_ocr_status():
+    return {"ok": True, "rapidocr": OCR_RT.is_file(), "windows": sys.platform == "win32"}
+
+
+def _run_ocr(cmd, timeout):
+    import subprocess
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    p = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=flags)
+    out = p.stdout.decode("utf-8", "replace").strip().splitlines()
+    if not out:
+        raise RuntimeError((p.stderr.decode("utf-8", "replace") or "辨識程式沒有輸出")[-300:])
+    return json.loads(out[-1])
+
+
+def _windows_ocr_items(res):
+    """Windows OCR 只給「字」與框：留下 1～2 位數字當座號、三位數 [1-6]xx 當班級提示；一律標需確認。"""
+    items, hints = [], []
+    for w in res.get("words", []):
+        t = str(w.get("text", ""))
+        if re.fullmatch(r"[1-6]\d{2}", t):
+            hints.append({"grade": int(t[0]), "className": int(t[1:]), "raw": t})
+        elif re.fullmatch(r"\d{1,2}", t) and int(t) >= 1:
+            items.append({"n": int(t), "score": None, "raw": t, "box": [w["x"], w["y"], w["w"], w["h"]],
+                          "uncertain": True, "why": "內建引擎（手寫較不準），請核對"})
+    return {"ok": True, "engine": "windows", "width": res.get("width"), "height": res.get("height"),
+            "items": items, "hints": hints, "lines": [w.get("text", "") for w in res.get("words", [])]}
+
+
+def chair_ocr(data):
+    import tempfile
+    raw = str((data or {}).get("image", ""))
+    if "," in raw[:100]:
+        raw = raw.split(",", 1)[1]
+    try:
+        blob = base64.b64decode(raw)
+    except Exception:
+        return {"ok": False, "error": "圖片資料格式不對"}
+    if not blob or len(blob) > 30 * 1024 * 1024:
+        return {"ok": False, "error": "圖片是空的或超過 30 MB"}
+    engine = (data or {}).get("engine") or ("rapidocr" if OCR_RT.is_file() else "windows")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+    try:
+        tmp.write(blob)
+        tmp.close()
+        t0 = time.time()
+        if engine == "rapidocr":
+            if not OCR_RT.is_file():
+                return {"ok": False, "error": "還沒安裝進階辨識（請先執行「安裝本機辨識.bat」）"}
+            res = _run_ocr([str(OCR_RT), str(HERE / "ocr_rapid.py"), tmp.name], 180)
+        else:
+            if sys.platform != "win32":
+                return {"ok": False, "error": "內建辨識只支援 Windows"}
+            res = _run_ocr(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HERE / "ocr_win.ps1"),
+                            "-Path", tmp.name, "-Lang", "zh-Hant-TW"], 90)
+            if res.get("ok"):
+                res = _windows_ocr_items(res)
+            elif res.get("error") == "NO_OCR_LANGUAGE":
+                res["error"] = "這台電腦沒有可用的 Windows OCR 語言"
+        res.setdefault("seconds", round(time.time() - t0, 1))
+        return res
+    except Exception as e:
+        return {"ok": False, "error": "辨識失敗：" + str(e)[:200]}
+    finally:
+        try:
+            Path(tmp.name).unlink()
+        except Exception:
+            pass
+
+
+def chair_inbox_done(name):
+    if not _INBOX_NAME.match(str(name or "")):
+        return {"ok": False, "error": "檔名不合法"}
+    src = CHAIR_INBOX / name
+    if not src.is_file():
+        return {"ok": False, "error": "找不到這個檔案"}
+    (CHAIR_INBOX / "done").mkdir(exist_ok=True)
+    dst = CHAIR_INBOX / "done" / name
+    if dst.exists():
+        dst = CHAIR_INBOX / "done" / f"{int(time.time())}_{name}"
+    src.replace(dst)
+    return {"ok": True}
+
 # ========== AI 評分（openai 相容聊天補全；見《AI串接窗口設定規範》）==========
 def _bad_header_chars(*vals):
     """API Key/端點/模型這些會被塞進 HTTP header 的欄位，含中文等非 latin-1 字元會讓 urllib 在送出當下
@@ -1258,6 +1389,10 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, diagnostics())
             if u.path == "/api/timetable":
                 return self._send(200, {"ok": True, "timetable": read_timetable()})
+            if u.path == "/api/chair-inbox":
+                return self._send(200, chair_inbox_list())
+            if u.path == "/api/chair-ocr/status":
+                return self._send(200, chair_ocr_status())
             if u.path == "/api/update/check":
                 return self._send(200, updater.check_update(HERE))
             if u.path == "/oauth/callback":
@@ -1301,6 +1436,10 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if u.path == "/api/timetable":
                 return self._send(200, save_timetable(data))
+            if u.path == "/api/chair-ocr":
+                return self._send(200, chair_ocr(data))
+            if u.path == "/api/chair-inbox/done":
+                return self._send(200, chair_inbox_done(data.get("name", "")))
             if u.path == "/api/grade":
                 return self._send(200, grade_submission(data))
             if u.path == "/api/grade-batch":

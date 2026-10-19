@@ -101,6 +101,13 @@
   .tag.sub{background:var(--warn-soft);color:var(--warn)}.tag.graded{background:var(--ok-soft);color:var(--ok)}
   .empty{padding:48px 24px;text-align:center;color:var(--muted)}
   .empty .t{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
+  /* 靠椅子處罰總開關（頁首）：一按就寫進 Firebase */
+  .chairSw{display:inline-flex;align-items:center;gap:8px}
+  .chairSw .swTrack{position:relative;width:34px;height:18px;border-radius:999px;background:#9AA1AE;transition:background .15s}
+  .chairSw .swKnob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
+  .chairSw.on .swTrack{background:#16A34A}.chairSw.on .swKnob{left:18px}
+  .chairSw b{min-width:1.2em;font-size:12.5px}.chairSw.on b{color:#16A34A}
+  .chairSw.busy{opacity:.6;pointer-events:none}
   .gate{position:fixed;inset:0;background:rgba(20,24,32,.45);display:grid;place-items:center;padding:24px;z-index:50}
   .gate.off{display:none}
   /* 即時繳交：右下角綠色圓鈕，點了開置頂投影視窗；開著時顯示已交人數，有人剛交就往外擴散一圈 */
@@ -243,6 +250,9 @@
     <button class="iconBtn" id="themeToggle" type="button"></button>
     <div style="flex:1"></div>
     <span id="who" class="note" style="margin:0"></span>
+    <button class="btn chairSw" id="chairSw" type="button" role="switch" aria-checked="false" hidden title="靠椅子處罰總開關：開＝被登記的學生繳交時會看到提醒並等待；一按就生效">
+      <span>🪑 靠椅子處罰</span><span class="swTrack"><span class="swKnob"></span></span><b id="chairSwTxt">…</b></button>
+    <button class="btn" id="chairBtn" hidden title="登記沒靠椅子的學生（上傳白板照片自動辨識／手動登記／紀錄清單／設定）">🪑 紀錄</button>
     <button class="btn" id="ttBtn" hidden>課表</button>
     <button class="btn" id="aiBtn" hidden>設定</button>
     <button class="btn" id="logoutBtn" hidden>登出</button>
@@ -466,6 +476,72 @@
       <button class="btn btn-primary" id="ttSave">儲存課表</button>
     </div>
     <div class="note" id="ttNote"></div>
+  </div>
+</div>
+
+<!-- 靠椅子紀錄：總開關＋待匯入＋手動登記＋紀錄清單 -->
+<div class="gate off" id="chairModal">
+  <div class="panel" style="width:min(880px,100%);max-height:90vh;overflow:auto">
+    <h2>🪑 靠椅子紀錄</h2>
+    <p>學生下課四步驟（含靠椅子）沒做確實時，在這裡登記。被登記的學生<b>下次按「繳交學習單」</b>會看到 😠 提醒、累計次數，並要等待幾秒才能交；次數越多等越久。
+      <b>下課前幾分鐘內</b>不用等（紀錄照樣累計）。總開關關掉＝所有學生直接繳交，紀錄仍保留。</p>
+
+    <div style="border:1px solid var(--line2);border-radius:10px;padding:12px 14px;margin-bottom:16px;background:var(--surface2)">
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px;font-weight:700;margin-bottom:10px"><input type="checkbox" id="chairEnable" style="margin:0;width:18px;height:18px">啟用繳交前提醒與等待（與繳交綁在一起）</label>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <div class="field" style="flex:2;min-width:200px;margin:0"><label>等待秒數（第 1 次、第 2 次…；超過就一直用最後一個）</label><input id="chairSteps" placeholder="3, 10, 20, 30, 60" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+        <div class="field" style="flex:1;min-width:130px;margin:0"><label>下課前幾分鐘免等待</label><input id="chairGrace" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+        <button class="btn btn-primary" id="chairSaveCfg">儲存設定</button>
+      </div>
+      <div class="note" id="chairCfgNote" style="margin:8px 0 0"></div>
+    </div>
+
+    <h3 style="margin:0 0 6px;font-size:14px">📷 上傳白板照片，自動辨識座號</h3>
+    <div id="chairOcrBox" style="border:1px dashed var(--line2);border-radius:10px;padding:12px 14px;margin-bottom:16px;background:var(--surface2)">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input type="file" id="chairOcrFile" accept="image/*">
+        <span class="note" id="chairOcrEngine" style="margin:0"></span>
+      </div>
+      <div class="note" id="chairOcrNote" style="margin:6px 0 0">選擇照片，或把照片拖進這個框、直接貼上（Ctrl+V）。辨識全程在這台電腦上跑，照片不會傳到任何 AI 或網路。</div>
+      <div id="chairOcrResult" hidden style="margin-top:10px">
+        <canvas id="chairOcrCanvas" style="max-width:100%;border:1px solid var(--line);border-radius:8px;display:block"></canvas>
+        <div class="note" style="margin:8px 0 4px">辨識到的座號（<span style="color:#16A34A;font-weight:700">綠框</span>＝有把握，<span style="color:#D97706;font-weight:700">橘框</span>＝請對照照片確認）。點標籤可排除／恢復；漏掉的在下面補。</div>
+        <div id="chairOcrChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="margin:0"><label>補座號</label><input id="chairOcrAdd" placeholder="例：8, 21" style="width:110px;padding:6px 8px;border:1px solid var(--line2);border-radius:7px"></div>
+          <button class="btn" id="chairOcrAddBtn" type="button">加入</button>
+          <div class="field" style="margin:0"><label>日期</label><input id="chairOcrDate" type="date" style="padding:6px 8px;border:1px solid var(--line2);border-radius:7px"></div>
+          <div class="field" style="margin:0;width:64px"><label>年級</label><input id="chairOcrGrade" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+          <div class="field" style="margin:0;width:64px"><label>班級</label><input id="chairOcrClass" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+          <button class="btn btn-primary" id="chairOcrSave" type="button">寫入 Firebase</button>
+        </div>
+        <div class="note" id="chairOcrSaveNote" style="margin:6px 0 0"></div>
+      </div>
+    </div>
+
+    <h3 style="margin:0 0 6px;font-size:14px">待匯入（白板照片辨識結果）</h3>
+    <div id="chairInbox" style="margin-bottom:16px"></div>
+
+    <h3 style="margin:0 0 6px;font-size:14px">手動登記／補登</h3>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:4px">
+      <div class="field" style="margin:0"><label>日期</label><input id="chairDate" type="date" style="padding:6px 8px;border:1px solid var(--line2);border-radius:7px"></div>
+      <div class="field" style="margin:0;width:70px"><label>年級</label><input id="chairGrade" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+      <div class="field" style="margin:0;width:70px"><label>班級</label><input id="chairClass" inputmode="numeric" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+      <div class="field" style="margin:0;flex:1;min-width:180px"><label>座號（多個用逗號或空格分開）</label><input id="chairSeats" placeholder="例：3, 12, 25" style="width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:7px"></div>
+      <button class="btn" id="chairAddBtn">登記</button>
+    </div>
+    <div class="note" id="chairAddNote" style="margin:4px 0 16px"></div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0;font-size:14px">紀錄清單 <span class="note" id="chairLogCount" style="margin:0"></span></h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="chairFilter" placeholder="篩選，例：5-3" style="width:120px;padding:5px 8px;border:1px solid var(--line2);border-radius:7px;font-size:12px">
+        <button class="btn" id="chairReload" style="padding:4px 10px">🔄 重新讀取</button>
+      </div>
+    </div>
+    <div id="chairLogBox" style="max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" id="chairClose">關閉</button></div>
   </div>
 </div>
 
@@ -782,6 +858,9 @@ function onLoggedIn(u){
   $('#newWs').disabled=false;          // 新增學習單
   $('#aiBtn').hidden=false;            // AI 評分設定
   $('#ttBtn').hidden=false;            // 課表
+  $('#chairBtn').hidden=false;         // 靠椅子紀錄
+  $('#chairSw').hidden=false;          // 靠椅子處罰總開關
+  chairInit();
   $('#liveFab').hidden=false;          // 即時繳交綠色圓鈕
   Promise.all([loadCourses(),loadWorksheets()]).then(loadTimetable,loadTimetable);
 }
@@ -3576,8 +3655,299 @@ $('#ttSave').addEventListener('click',function(){
     if(!r||!r.ok){note.style.color='var(--warn)';note.textContent='儲存失敗：'+((r&&r.error)||'未知錯誤');return;}
     TT=r.timetable;note.style.color='var(--ok)';
     note.textContent='已儲存（'+Object.keys(TT.slots).length+' 節課、'+TT.periods.length+' 個節次時間）。';
-    renderTtGrid();refreshAfterSettings();
+    renderTtGrid();refreshAfterSettings();chairSyncPeriods();
   }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='儲存失敗：'+e.message;});
+});
+
+// ================= 🪑 靠椅子：總開關／待匯入／手動登記／紀錄清單 =================
+// 資料（規格見《學習單資料與提交規範》§3-e）：
+//   chairSettings/main = {enabled, steps:[3,10,…], graceMin, periods:[{start,end}]}  ← 學生端關卡讀這份
+//   chairLog/{年級-班級-座號} = {grade,className,studentId, dates:['YYYY-MM-DD'…], count, pending, lastDate, servedAt}
+// 同一天同一人只記一次（dates 去重），所以同一張白板照片匯入兩次不會重複累計。
+// 待匯入：Claude 辨識白板照片後把結果存成 評分平台/chair-inbox/*.json，這裡按一下寫進 Firebase
+// （Firestore 只有老師登入才寫得進去，本機伺服器沒有金鑰，所以由這個已登入的頁面寫）。
+var CHAIR={cfg:null,logs:[],inbox:[]};
+var CHAIR_STEPS=[3,10,20,30,60];
+function chairId(g,c,s){return g+'-'+c+'-'+s;}
+function chairToday(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function chairPeriods(){return ttPeriods().map(function(p){return {start:p.start,end:p.end};});}
+function chairSeatsOf(text){var out=[];(String(text||'').replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-65248);}).match(/\d+/g)||[]).forEach(function(x){var n=+x;if(n>=1&&n<=99&&out.indexOf(n)<0)out.push(n);});return out.sort(function(a,b){return a-b;});}
+function chairPaintBtn(){
+  var on=!!(CHAIR.cfg&&CHAIR.cfg.enabled), n=(CHAIR.inbox||[]).filter(function(i){return !i.bad&&i.entries.length;}).length, sw=$('#chairSw');
+  sw.classList.toggle('on',on);sw.setAttribute('aria-checked',on?'true':'false');
+  $('#chairSwTxt').textContent=CHAIR.cfg?(on?'開':'關'):'…';
+  $('#chairBtn').textContent='🪑 紀錄'+(n?' · '+n+' 待匯入':'');
+  var cb=$('#chairEnable');if(cb)cb.checked=on;
+}
+// 總開關：只寫 enabled（順便補上還沒有的秒數階梯、同步節次時間），一按就生效，不用再按「儲存設定」
+function chairSetEnabled(v){
+  var sw=$('#chairSw');sw.classList.add('busy');
+  var data={enabled:!!v,updatedAt:firebase.firestore.FieldValue.serverTimestamp()};
+  if(!(CHAIR.cfg&&CHAIR.cfg.steps&&CHAIR.cfg.steps.length))data.steps=CHAIR_STEPS;
+  if(CHAIR.cfg==null||CHAIR.cfg.graceMin==null)data.graceMin=2;
+  if((TT.periods||[]).length)data.periods=chairPeriods();
+  return db.collection('chairSettings').doc('main').set(data,{merge:true}).then(chairLoadCfg).then(function(){
+    sw.classList.remove('busy');
+    var n=$('#chairCfgNote');if(n){n.style.color='var(--ok)';n.textContent='已'+(CHAIR.cfg.enabled?'開啟':'關閉')+'靠椅子處罰'+(CHAIR.cfg.enabled?'：被登記的學生下次繳交會看到提醒並等待。':'：學生繳交不會有任何提示。');}
+  }).catch(function(e){
+    sw.classList.remove('busy');chairPaintBtn();
+    alert('切換失敗：'+friendlyErr(e));
+  });
+}
+$('#chairSw').addEventListener('click',function(){chairSetEnabled(!(CHAIR.cfg&&CHAIR.cfg.enabled));});
+$('#chairEnable').addEventListener('change',function(){chairSetEnabled(this.checked);});
+function chairLoadCfg(){
+  return db.collection('chairSettings').doc('main').get().then(function(d){
+    CHAIR.cfg=d.exists?d.data():{enabled:false,steps:CHAIR_STEPS,graceMin:2,periods:[]};
+    chairPaintBtn();return CHAIR.cfg;
+  });
+}
+function chairLoadInbox(){
+  return fetch(WORKBENCH+'/api/chair-inbox').then(function(r){return r.json();}).then(function(r){
+    CHAIR.inbox=(r&&r.items)||[];chairPaintBtn();chairRenderInbox();
+  }).catch(function(){CHAIR.inbox=[];chairRenderInbox();});
+}
+function chairInit(){   // 登入後靜默載入：只為了讓按鈕顯示「開／關」與待匯入數量
+  chairLoadCfg().catch(function(e){console.warn('靠椅子設定讀取失敗（規則可能還沒部署）',e);});
+  chairLoadInbox();
+}
+function chairFillCfg(){
+  var c=CHAIR.cfg||{};
+  $('#chairEnable').checked=!!c.enabled;
+  $('#chairSteps').value=(c.steps&&c.steps.length?c.steps:CHAIR_STEPS).join(', ');
+  $('#chairGrace').value=c.graceMin==null?2:c.graceMin;
+}
+function chairSaveCfg(){
+  var note=$('#chairCfgNote');
+  var steps=($('#chairSteps').value.match(/\d+/g)||[]).map(Number).filter(function(n){return n>0&&n<=600;});
+  var grace=Number(digitsOnly($('#chairGrace').value));
+  if(!steps.length){note.style.color='var(--warn)';note.textContent='等待秒數至少要填一個（例：3, 10, 20）。';return;}
+  if(!isFinite(grace)||grace<0||grace>10){note.style.color='var(--warn)';note.textContent='下課前免等待的分鐘數請填 0～10。';return;}
+  var data={enabled:$('#chairEnable').checked,steps:steps,graceMin:grace,updatedAt:firebase.firestore.FieldValue.serverTimestamp()};
+  if((TT.periods||[]).length)data.periods=chairPeriods();   // 節次時間跟著課表走，學生端靠它判斷「下課前 N 分鐘」
+  note.style.color='var(--muted)';note.textContent='儲存中…';
+  db.collection('chairSettings').doc('main').set(data,{merge:true}).then(function(){
+    return chairLoadCfg();
+  }).then(function(){
+    note.style.color='var(--ok)';
+    note.textContent='已儲存：'+(CHAIR.cfg.enabled?'已啟用':'已關閉')+'；等待 '+steps.join('→')+' 秒；下課前 '+grace+' 分鐘免等待'+((CHAIR.cfg.periods||[]).length?'（已同步 '+CHAIR.cfg.periods.length+' 個節次時間）':'（還沒有節次時間，免等待不會生效，請先設定課表）')+'。';
+  }).catch(function(e){note.style.color='var(--warn)';note.textContent='儲存失敗：'+friendlyErr(e);});
+}
+// 課表存檔後把節次時間同步給學生端（只在設定過靠椅子之後才做，避免憑空建立文件）
+function chairSyncPeriods(){
+  if(!db||!CHAIR.cfg||!(TT.periods||[]).length)return;
+  db.collection('chairSettings').doc('main').set({periods:chairPeriods()},{merge:true}).then(chairLoadCfg).catch(function(e){console.warn('節次時間同步失敗',e);});
+}
+// 寫入一批紀錄：entries=[{grade,className,seats:[…]}]；回傳 {added, dup}
+function chairRecord(date,entries){
+  var items=[];entries.forEach(function(e){e.seats.forEach(function(s){items.push({g:e.grade,c:e.className,s:s});});});
+  if(!items.length)return Promise.resolve({added:0,dup:0});
+  return Promise.all(items.map(function(it){return db.collection('chairLog').doc(chairId(it.g,it.c,it.s)).get();})).then(function(snaps){
+    var batch=db.batch(),added=0,dup=0,TS=firebase.firestore.FieldValue;
+    snaps.forEach(function(sn,i){
+      var it=items[i],dates=((sn.exists&&sn.data().dates)||[]).slice();
+      if(dates.indexOf(date)>=0){dup++;return;}
+      dates.push(date);dates.sort();
+      batch.set(sn.ref,{grade:it.g,className:it.c,studentId:it.s,dates:dates,count:dates.length,lastDate:dates[dates.length-1],
+        pending:true,servedAt:TS.delete(),updatedAt:TS.serverTimestamp()},{merge:true});
+      added++;
+    });
+    return added?batch.commit().then(function(){return {added:added,dup:dup};}):{added:0,dup:dup};
+  });
+}
+function chairRenderInbox(){
+  var box=$('#chairInbox');if(!box)return;
+  if(!CHAIR.inbox.length){box.innerHTML='<div class="note" style="margin:0">目前沒有待匯入的檔案。每週五把白板照片交給 Claude 辨識後，結果會出現在這裡。</div>';return;}
+  box.innerHTML=CHAIR.inbox.map(function(it,i){
+    if(it.bad)return '<div style="border:1px solid var(--warn-border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12.5px;color:var(--warn)">⚠ '+esc(it.name)+'：格式不對（'+esc(it.bad)+'）</div>';
+    var lines=it.entries.map(function(e){return e.grade+'年'+e.className+'班：'+e.seats.join('、')+'（'+e.seats.length+' 人）';});
+    return '<div style="border:1px solid var(--line2);border-radius:8px;padding:8px 12px;margin-bottom:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+      +'<div style="flex:1;min-width:240px;font-size:13px;line-height:1.6"><b>'+esc(it.date)+'</b>　<span class="note" style="margin:0">'+esc(it.name)+(it.note?'　'+esc(it.note):'')+'</span><br>'+(lines.length?esc(lines.join('　｜　')):'<i>沒有任何有效的座號</i>')+'</div>'
+      +'<button class="btn btn-primary" data-chair-import="'+i+'"'+(lines.length?'':' disabled')+'>寫入 Firebase</button>'
+      +'<button class="btn" data-chair-skip="'+i+'" title="不寫入，直接把這個檔案收起來">略過</button></div>';
+  }).join('')+'<div class="note" id="chairInboxNote" style="margin:4px 0 0"></div>';
+}
+function chairInboxDone(name){
+  return fetch(WORKBENCH+'/api/chair-inbox/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})}).then(function(r){return r.json();});
+}
+$('#chairInbox').addEventListener('click',function(ev){
+  var imp=ev.target.closest('[data-chair-import]'),skp=ev.target.closest('[data-chair-skip]');
+  var it=CHAIR.inbox[+((imp||skp||{}).getAttribute&&(imp||skp).getAttribute(imp?'data-chair-import':'data-chair-skip'))];
+  if(!it)return;
+  var note=$('#chairInboxNote');
+  if(skp){if(!confirm('不寫入，直接收起 '+it.name+'？'))return;chairInboxDone(it.name).then(chairLoadInbox);return;}
+  var total=it.entries.reduce(function(n,e){return n+e.seats.length;},0);
+  if(!confirm('把 '+it.date+' 的 '+total+' 筆紀錄寫進 Firebase？\n（同一天同一人已經記過的會自動略過，不會重複累計）'))return;
+  imp.disabled=true;if(note){note.style.color='var(--muted)';note.textContent='寫入中…';}
+  chairRecord(it.date,it.entries).then(function(r){
+    return chairInboxDone(it.name).then(function(){
+      return chairLoadInbox().then(chairLoadLogs).then(function(){
+        var n2=$('#chairInboxNote');if(n2){n2.style.color='var(--ok)';n2.textContent='已寫入 '+r.added+' 筆'+(r.dup?'，'+r.dup+' 筆當天已記過而略過':'')+'。';}
+      });
+    });
+  }).catch(function(e){imp.disabled=false;if(note){note.style.color='var(--warn)';note.textContent='寫入失敗：'+friendlyErr(e);}});
+});
+$('#chairAddBtn').addEventListener('click',function(){
+  var note=$('#chairAddNote'),date=$('#chairDate').value,g=+digitsOnly($('#chairGrade').value),c=+digitsOnly($('#chairClass').value),seats=chairSeatsOf($('#chairSeats').value);
+  if(!date||!(g>=1&&g<=6)||!(c>=1&&c<=20)||!seats.length){note.style.color='var(--warn)';note.textContent='日期、年級（1～6）、班級、座號都要填。';return;}
+  var btn=this;btn.disabled=true;note.style.color='var(--muted)';note.textContent='寫入中…';
+  chairRecord(date,[{grade:g,className:c,seats:seats}]).then(function(r){
+    btn.disabled=false;note.style.color='var(--ok)';
+    note.textContent='已登記 '+r.added+' 人'+(r.dup?'，'+r.dup+' 人當天已記過而略過':'')+'。';
+    $('#chairSeats').value='';return chairLoadLogs();
+  }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='登記失敗：'+friendlyErr(e);});
+});
+function chairLoadLogs(){
+  var box=$('#chairLogBox');box.innerHTML='<div class="note" style="padding:10px">載入中…</div>';
+  return db.collection('chairLog').get().then(function(qs){
+    var list=[];qs.forEach(function(d){list.push(Object.assign({id:d.id},d.data()));});
+    list.sort(function(a,b){return (a.grade-b.grade)||(a.className-b.className)||(a.studentId-b.studentId);});
+    CHAIR.logs=list;chairRenderLogs();
+  }).catch(function(e){box.innerHTML='<div class="note" style="padding:10px;color:var(--warn);white-space:pre-line">讀取失敗：'+esc(friendlyErr(e))+'</div>';});
+}
+function chairRenderLogs(){
+  var f=($('#chairFilter').value||'').trim(),box=$('#chairLogBox');
+  var list=CHAIR.logs.filter(function(l){return !f||l.id.indexOf(f)===0;});
+  $('#chairLogCount').textContent='（'+list.length+(f?' / '+CHAIR.logs.length:'')+' 人）';
+  if(!list.length){box.innerHTML='<div class="note" style="padding:10px">'+(CHAIR.logs.length?'沒有符合的紀錄。':'還沒有任何紀錄。')+'</div>';return;}
+  box.innerHTML='<table style="width:100%"><thead><tr><th>學生</th><th style="width:70px">累計</th><th style="width:90px">狀態</th><th>日期</th><th style="width:130px"></th></tr></thead><tbody>'
+    +list.map(function(l){
+      return '<tr><td>'+l.grade+'年'+l.className+'班 '+l.studentId+'號</td><td><b>'+(l.count||0)+'</b> 次</td>'
+        +'<td>'+(l.pending?'<span style="color:var(--warn);font-weight:700">待處理</span>':'<span style="color:var(--muted)">已處理</span>')+'</td>'
+        +'<td style="font-size:12px;color:var(--muted)">'+esc((l.dates||[]).join('、'))+'</td>'
+        +'<td style="white-space:nowrap"><button class="btn" data-chair-undo="'+esc(l.id)+'" style="padding:3px 8px;font-size:12px" title="撤銷最近一次（記錯時用）">−1 次</button> '
+        +'<button class="btn" data-chair-del="'+esc(l.id)+'" style="padding:3px 8px;font-size:12px;color:var(--warn)" title="整筆刪除（次數歸零）">刪除</button></td></tr>';
+    }).join('')+'</tbody></table>';
+}
+$('#chairLogBox').addEventListener('click',function(ev){
+  var u=ev.target.closest('[data-chair-undo]'),d=ev.target.closest('[data-chair-del]');
+  if(!u&&!d)return;
+  var id=(u||d).getAttribute(u?'data-chair-undo':'data-chair-del'),ref=db.collection('chairLog').doc(id);
+  if(d){var lg=CHAIR.logs.filter(function(x){return x.id===id;})[0]||{};
+    if(!confirm('刪除 '+lg.grade+'年'+lg.className+'班 '+lg.studentId+'號 的全部紀錄（次數歸零）？'))return;ref.delete().then(chairLoadLogs).catch(function(e){alert(friendlyErr(e));});return;}
+  ref.get().then(function(sn){
+    var dates=((sn.exists&&sn.data().dates)||[]).slice();dates.pop();
+    if(!dates.length)return ref.delete();
+    return ref.set({dates:dates,count:dates.length,lastDate:dates[dates.length-1],pending:false,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
+  }).then(chairLoadLogs).catch(function(e){alert(friendlyErr(e));});
+});
+$('#chairFilter').addEventListener('input',chairRenderLogs);
+$('#chairReload').addEventListener('click',function(){chairLoadCfg().then(chairFillCfg,function(){});chairLoadInbox();chairLoadLogs();});
+$('#chairSaveCfg').addEventListener('click',chairSaveCfg);
+$('#chairBtn').addEventListener('click',function(){
+  $('#chairModal').classList.remove('off');
+  if(!$('#chairDate').value)$('#chairDate').value=chairToday();
+  $('#chairCfgNote').textContent='';
+  chairFillCfg();
+  chairLoadCfg().then(chairFillCfg).catch(function(e){var n=$('#chairCfgNote');n.style.color='var(--warn)';n.style.whiteSpace='pre-line';n.textContent='設定讀取失敗：'+friendlyErr(e);});
+  chairLoadInbox();chairLoadLogs();chairOcrEngine();
+  if(!$('#chairOcrDate').value)$('#chairOcrDate').value=chairToday();
+});
+$('#chairClose').addEventListener('click',function(){$('#chairModal').classList.add('off');});
+
+// ---- 上傳白板照片 → 本機辨識（/api/chair-ocr；RapidOCR 或 Windows 內建，都不送 LLM）----
+var OCR={items:[],picked:{},extra:{},img:null,busy:false};
+function chairOcrEngine(){
+  fetch(WORKBENCH+'/api/chair-ocr/status').then(function(r){return r.json();}).then(function(s){
+    var t=$('#chairOcrEngine');
+    t.textContent=s.rapidocr?'引擎：RapidOCR（進階，本機離線）':s.windows?'引擎：Windows 內建（免安裝，手寫較不準；建議執行「安裝本機辨識.bat」）':'這台電腦沒有可用的辨識引擎';
+    t.style.color=s.rapidocr?'var(--ok)':'var(--warn)';
+  }).catch(function(){});
+}
+function chairOcrSeats(){   // 目前要寫入的座號（辨識到且沒被排除的＋手動補的）
+  var set={};
+  OCR.items.forEach(function(it){if(OCR.picked[it.n]!==false)set[it.n]=true;});
+  Object.keys(OCR.extra).forEach(function(k){if(OCR.extra[k])set[k]=true;});
+  return Object.keys(set).map(Number).sort(function(a,b){return a-b;});
+}
+function chairOcrDraw(){
+  var cv=$('#chairOcrCanvas'),img=OCR.img;if(!img)return;
+  cv.width=img.width;cv.height=img.height;
+  var g=cv.getContext('2d');g.drawImage(img,0,0);
+  var lw=Math.max(3,Math.round(img.width/320)),fs=Math.max(18,Math.round(img.width/45));
+  g.lineWidth=lw;g.font='bold '+fs+'px sans-serif';g.textBaseline='bottom';
+  OCR.items.forEach(function(it){
+    var off=OCR.picked[it.n]===false,b=it.box;
+    g.strokeStyle=off?'#9AA1AE':(it.uncertain?'#D97706':'#16A34A');
+    g.strokeRect(b[0],b[1],b[2],b[3]);
+    var lab=String(it.n),tw=g.measureText(lab).width+10;
+    g.fillStyle=g.strokeStyle;g.fillRect(b[0],Math.max(0,b[1]-fs-6),tw,fs+6);
+    g.fillStyle='#fff';g.fillText(lab,b[0]+5,Math.max(fs+6,b[1]));
+  });
+}
+function chairOcrChips(){
+  var box=$('#chairOcrChips'),seen={},html='';
+  OCR.items.forEach(function(it){
+    var prev=seen[it.n];if(!prev||(prev.uncertain&&!it.uncertain))seen[it.n]=it;
+  });
+  Object.keys(seen).map(Number).sort(function(a,b){return a-b;}).forEach(function(n){
+    var it=seen[n],off=OCR.picked[n]===false;
+    html+='<button type="button" class="btn" data-ocr-n="'+n+'" title="'+esc(it.uncertain?(it.why||'請確認'):'有把握')+'" style="padding:4px 10px;font-weight:700;'
+      +(off?'opacity:.45;text-decoration:line-through;':'')+'border-color:'+(it.uncertain?'#D97706':'#16A34A')+'">'+n+(it.uncertain?' ?':'')+'</button>';
+  });
+  Object.keys(OCR.extra).filter(function(k){return OCR.extra[k]&&!seen[k];}).map(Number).sort(function(a,b){return a-b;}).forEach(function(n){
+    html+='<button type="button" class="btn" data-ocr-x="'+n+'" title="手動補的，點一下移除" style="padding:4px 10px;font-weight:700;border-style:dashed">'+n+' ＋</button>';
+  });
+  box.innerHTML=html||'<span class="note" style="margin:0">沒有辨識到座號，請在下面手動補。</span>';
+  var n=chairOcrSeats().length;$('#chairOcrSave').textContent='寫入 Firebase（'+n+' 人）';$('#chairOcrSave').disabled=!n;
+}
+$('#chairOcrChips').addEventListener('click',function(ev){
+  var b=ev.target.closest('button');if(!b)return;
+  if(b.getAttribute('data-ocr-n')){var n=b.getAttribute('data-ocr-n');OCR.picked[n]=OCR.picked[n]===false;}
+  if(b.getAttribute('data-ocr-x'))OCR.extra[b.getAttribute('data-ocr-x')]=false;
+  chairOcrDraw();chairOcrChips();
+});
+$('#chairOcrAddBtn').addEventListener('click',function(){
+  chairSeatsOf($('#chairOcrAdd').value).forEach(function(n){OCR.extra[n]=true;OCR.picked[n]=true;});
+  $('#chairOcrAdd').value='';chairOcrChips();
+});
+function chairOcrRun(file){
+  if(OCR.busy||!file)return;
+  var note=$('#chairOcrNote');
+  if(!/^image\//.test(file.type||'')){note.style.color='var(--warn)';note.textContent='這不是圖片檔。';return;}
+  var url=URL.createObjectURL(file),im=new Image();
+  im.onerror=function(){URL.revokeObjectURL(url);note.style.color='var(--warn)';note.textContent='這張圖片瀏覽器讀不了（iPhone 的 HEIC 請改用 JPG／用「最相容」格式拍）。';};
+  im.onload=function(){
+    URL.revokeObjectURL(url);
+    var k=Math.min(1,2400/Math.max(im.width,im.height)),c=document.createElement('canvas');
+    c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);
+    c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+    OCR.img=c;OCR.items=[];OCR.picked={};OCR.extra={};
+    $('#chairOcrResult').hidden=true;$('#chairOcrSaveNote').textContent='';
+    OCR.busy=true;note.style.color='var(--muted)';note.textContent='辨識中…（本機執行，約 5～15 秒）';
+    fetch(WORKBENCH+'/api/chair-ocr',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:c.toDataURL('image/jpeg',0.9)})})
+      .then(function(r){return r.json();}).then(function(r){
+        OCR.busy=false;
+        if(!r||!r.ok){note.style.color='var(--warn)';note.textContent='辨識失敗：'+((r&&r.error)||'未知錯誤');return;}
+        OCR.items=(r.items||[]).filter(function(it){return it.n>=1&&it.n<=99;});
+        var h=(r.hints||[])[0];
+        if(h){$('#chairOcrGrade').value=h.grade;$('#chairOcrClass').value=h.className;}
+        if(!$('#chairOcrDate').value)$('#chairOcrDate').value=chairToday();
+        note.style.color='var(--muted)';
+        note.textContent='引擎 '+(r.engine==='rapidocr'?'RapidOCR':'Windows 內建')+'，'+r.seconds+' 秒，辨識到 '+OCR.items.length+' 個座號'
+          +(h?'；照片上寫著 '+h.grade+' 年 '+h.className+' 班，已帶入':'；照片上沒找到班級，請自己填年級、班級')+'。';
+        $('#chairOcrResult').hidden=false;chairOcrDraw();chairOcrChips();
+      }).catch(function(e){OCR.busy=false;note.style.color='var(--warn)';note.textContent='辨識失敗：'+e.message;});
+  };
+  im.src=url;
+}
+$('#chairOcrFile').addEventListener('change',function(){chairOcrRun(this.files[0]);this.value='';});
+['dragover','drop'].forEach(function(t){$('#chairOcrBox').addEventListener(t,function(ev){
+  ev.preventDefault();if(t==='drop'&&ev.dataTransfer.files[0])chairOcrRun(ev.dataTransfer.files[0]);});});
+document.addEventListener('paste',function(ev){
+  if($('#chairModal').classList.contains('off'))return;
+  var f=Array.prototype.map.call(ev.clipboardData&&ev.clipboardData.files||[],function(x){return x;})[0];
+  if(f&&/^image\//.test(f.type))chairOcrRun(f);
+});
+$('#chairOcrSave').addEventListener('click',function(){
+  var note=$('#chairOcrSaveNote'),date=$('#chairOcrDate').value,g=+digitsOnly($('#chairOcrGrade').value),c=+digitsOnly($('#chairOcrClass').value),seats=chairOcrSeats();
+  if(!date||!(g>=1&&g<=6)||!(c>=1&&c<=20)||!seats.length){note.style.color='var(--warn)';note.textContent='日期、年級（1～6）、班級、座號都要有。';return;}
+  if(!confirm('把 '+date+' '+g+'年'+c+'班 的 '+seats.length+' 位（'+seats.join('、')+'）寫進 Firebase？\n請先對照照片確認座號正確。'))return;
+  var btn=this;btn.disabled=true;note.style.color='var(--muted)';note.textContent='寫入中…';
+  chairRecord(date,[{grade:g,className:c,seats:seats}]).then(function(r){
+    note.style.color='var(--ok)';note.textContent='已寫入 '+r.added+' 人'+(r.dup?'，'+r.dup+' 人當天已記過而略過':'')+'。';
+    OCR.items=[];OCR.picked={};OCR.extra={};chairOcrChips();chairOcrDraw();return chairLoadLogs();
+  }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='寫入失敗：'+friendlyErr(e);});
 });
 
 // P3 AI 批次評分（整份學習單）

@@ -61,6 +61,24 @@ service cloud.firestore {
       allow delete: if isTeacher();
     }
 
+    // --- 課堂「靠椅子」提醒＋繳交等待（見《學習單資料與提交規範》§3-e）---
+    // chairSettings/main：總開關、等待秒數階梯、下課前免罰分鐘、節次時間（老師在評分平台「🪑 靠椅子」設定）。
+    match /chairSettings/{d} {
+      allow read: if request.auth != null;
+      allow write: if isTeacher();
+    }
+    // chairLog/{年級-班級-座號}：該生被記錄的日期與累計次數。學生只能 get 自己那筆（要知道 id），不能 list；
+    // 學生唯一能改的是「處理完」：只動 pending（改成 false）與 servedAt，次數與日期只有老師能改。
+    match /chairLog/{id} {
+      allow get: if request.auth != null;
+      allow list: if isTeacher();
+      allow create, delete: if isTeacher();
+      allow update: if isTeacher()
+        || (request.auth != null
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pending', 'servedAt'])
+            && request.resource.data.pending == false);
+    }
+
     // --- 學習單設定（分數計算 scoring／評分規準 rubric／分類，老師管理；標準答案在學習單自己的 #admin，不存這裡）---
     match /worksheets/{ws} {
       allow read: if true;              // 學生端可讀題目設定（不含答案時）
