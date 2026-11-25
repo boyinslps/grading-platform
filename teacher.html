@@ -928,6 +928,19 @@ function renderCourseList(){
   document.querySelectorAll('#courses .item').forEach(function(el){el.classList.toggle('on',el.dataset.id===curCourse);});
 }
 // ---- 選班級：更新頁首班級標題，班級內再用右上角下拉選學習單 ----
+// 這班有設「本週學習單」就自動換成那一份（點班級、設完本週學習單、重讀設定都走這裡），不用再手動從下拉選。
+function followWeekWs(cid){
+  var ws=((typeof TT!=='undefined'&&TT.currentWs)||{})[cid];
+  var meta=(window._wsMeta||{})[ws];
+  if(!ws||!meta||ws===curWs)return false;
+  var sel=$('#wsSelect');
+  if(sel&&!sel.querySelector('option[value="'+ws+'"]')){
+    var op=document.createElement('option');op.value=ws;op.textContent=wsTitleOf(ws);sel.appendChild(op);
+  }
+  if(sel)sel.value=ws;
+  selectWs(ws,meta);
+  return true;
+}
 function selectCourse(cid){
   curCourse=cid;
   renderCourseList();
@@ -936,7 +949,8 @@ function selectCourse(cid){
   $('#wsTitle').textContent=course?(course.name||cid):(cid==='__other__'?'其他（未匹配班級座號）':'尚未選擇班級');
   $('#editRoster').disabled=!(cid&&cid!=='__other__');
   $('#wsSelect').disabled=false;
-  if(curWs){subsCache=[];loadSubs(curWs).catch(function(){});}
+  if(cid!=='__other__'&&followWeekWs(cid)){/* 已切到這班的本週學習單（selectWs 會一併重讀繳交） */}
+  else if(curWs){subsCache=[];loadSubs(curWs).catch(function(){});}
   else{
     $('#wsMeta').textContent='請從右上角下拉選單選一份學習單。';
     $('#stSub').textContent='—';$('#stGraded').textContent='—';$('#stPending').textContent='—';$('#stAvg').textContent='—';
@@ -3235,6 +3249,7 @@ function loadTimetable(){
   return ttFetch('GET').then(function(r){
     if(r&&r.ok&&r.timetable)TT=r.timetable;
     renderNow();
+    if(curCourse&&curCourse!=='__other__'&&!curWs)followWeekWs(curCourse);   // 剛登入、還沒選學習單：直接帶出這班的本週學習單
     if(!ttTimer)ttTimer=setInterval(renderNow,30000);   // 每 30 秒重算一次「現在這節」
   }).catch(function(){renderNow();});
 }
@@ -3342,7 +3357,7 @@ $('#nowWsSel').addEventListener('change',function(){
   var cid=this.dataset.cid;if(!cid)return;
   TT.currentWs=TT.currentWs||{};
   if(this.value)TT.currentWs[cid]=this.value;else delete TT.currentWs[cid];
-  ttFetch('POST',TT).then(function(r){if(r&&r.ok&&r.timetable)TT=r.timetable;renderNow();})
+  ttFetch('POST',TT).then(function(r){if(r&&r.ok&&r.timetable)TT=r.timetable;renderNow();if(cid===curCourse)followWeekWs(cid);})
     .catch(function(e){$('#mainNote').textContent='本週學習單存檔失敗：'+e.message;});
 });
 // 已開過的學習單 Admin 視窗（依 wsId 記住視窗參考），「上課」時若還開著就不重開，只補開即時繳交——
@@ -3362,13 +3377,14 @@ function startClass(cid,wsId){
     var op=document.createElement('option');op.value=wsId;op.textContent=wsTitleOf(wsId);sel.appendChild(op);
   }
   if(sel)sel.value=wsId;
-  selectWs(wsId,meta);
+  if(curWs!==wsId)selectWs(wsId,meta);   // selectCourse 已經照本週學習單換過就不重讀
   // 即時繳交要最先開：置頂視窗需要「剛點擊」的使用者動作，先開別的視窗可能把這個動作用掉
   var livePromise=openLiveWindow(cid,wsId);
   var opened=[],alreadyOpen=isWinOpen(wsAdminWindows[wsId]),want=meta.url&&!alreadyOpen?2:1;
+  var adminUrl=meta.url?meta.url.split('#')[0]+'#admin':'',adminBlocked=false;
   if(meta.url&&!alreadyOpen){
-    var w=window.open(meta.url.split('#')[0]+'#admin','wsAdmin_'+wsId);
-    if(w){wsAdminWindows[wsId]=w;opened.push('學習單 Admin');}
+    var w=window.open(adminUrl,'wsAdmin_'+wsId);
+    if(w){wsAdminWindows[wsId]=w;opened.push('學習單 Admin');}else adminBlocked=true;
   }else if(alreadyOpen){
     opened.push('學習單 Admin（已開著，未重開）');
   }
@@ -3376,11 +3392,23 @@ function startClass(cid,wsId){
     if(ok)opened.push(isWinOpen(live.pip)?'即時繳交（置頂）':'即時繳交');
     if(!opened.length){
       note.textContent='視窗被瀏覽器攔住了，請允許這個網站的彈出視窗後再按一次「上課」。';
-      return;
+    }else{
+      note.textContent='已開啟：'+opened.join('、')+'（'+courseLabel(cid)+' · '+wsTitleOf(wsId)+'）'
+        +(meta.url?'':'　※這份學習單沒有登錄網址，Admin 沒開；到「新增學習單」補上網址即可。')
+        +(opened.length<want&&!adminBlocked?'　※有一個視窗被瀏覽器攔住，請允許彈出視窗。':'');
     }
-    note.textContent='已開啟：'+opened.join('、')+'（'+courseLabel(cid)+' · '+wsTitleOf(wsId)+'）'
-      +(meta.url?'':'　※這份學習單沒有登錄網址，Admin 沒開；到「新增學習單」補上網址即可。')
-      +(opened.length<want?'　※有一個視窗被瀏覽器攔住，請允許彈出視窗。':'');
+    // 瀏覽器一次點擊只放行一個彈窗：即時繳交先開了，Admin 就會被攔。給一顆按鈕，再點一次（新的點擊）就能開。
+    if(adminBlocked&&!isWinOpen(wsAdminWindows[wsId])){
+      note.appendChild(document.createTextNode('　※學習單 Admin 被瀏覽器攔住了（一次點擊只能開一個視窗）→ '));
+      var ab=document.createElement('button');ab.type='button';ab.className='btn btn-primary';ab.textContent='開啟學習單 Admin';
+      ab.style.cssText='padding:3px 10px;font-size:12px';
+      ab.onclick=function(){
+        var w2=window.open(adminUrl,'wsAdmin_'+wsId);
+        if(w2){wsAdminWindows[wsId]=w2;ab.remove();note.appendChild(document.createTextNode('已開啟學習單 Admin。'));}
+        else ab.textContent='還是被攔住：請點網址列右邊圖示「允許彈出式視窗」';
+      };
+      note.appendChild(ab);
+    }
   });
 }
 $('#startClassBtn').addEventListener('click',function(){
@@ -3444,6 +3472,7 @@ $('#weekSave').addEventListener('click',function(){
     btn.disabled=false;
     if(!r||!r.ok){note.style.color='var(--warn)';note.textContent='儲存失敗：'+((r&&r.error)||'未知錯誤');return;}
     TT=r.timetable;renderNow();weekRender();
+    if(curCourse&&curCourse!=='__other__')followWeekWs(curCourse);   // 正在看的班級也跟著換成新的本週學習單
     note.style.color='var(--ok)';note.textContent='已儲存：'+n+' 個班級這週上「'+wsTitleOf(ws)+'」。';
   }).catch(function(e){btn.disabled=false;note.style.color='var(--warn)';note.textContent='儲存失敗：'+e.message;});
 });
